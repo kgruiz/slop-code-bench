@@ -44,16 +44,7 @@ def _backfill_top20_share(
     """
     from slop_code.metrics.checkpoint.mass import compute_top20_share
 
-    # Map from symbols.jsonl field → overall_quality.json functions field
-    metric_fields = {
-        "complexity": "cc_top20",
-        "lines": "lines_top20",
-        "statements": "statements_top20",
-        "max_nesting_depth": "nesting_top20",
-        "comparisons": "comparisons_top20",
-        "branches": "branches_top20",
-        "control_blocks": "control_top20",
-    }
+    metric_fields = {"complexity": "cc_top20"}
 
     files_processed = 0
     files_updated = 0
@@ -263,22 +254,24 @@ def _update_ast_grep_jsonl(
                     continue
 
                 rule_id = violation.get("rule_id")
-                if rule_id and rule_id in rules_lookup:
-                    rule_info = rules_lookup[rule_id]
-                    old_cat = violation.get("category", "")
-                    old_subcat = violation.get("subcategory", "unknown")
-                    old_weight = violation.get("weight", 1)
+                if not rule_id or rule_id not in rules_lookup:
+                    continue
 
-                    violation["category"] = rule_info["category"]
-                    violation["subcategory"] = rule_info["subcategory"]
-                    violation["weight"] = rule_info["weight"]
+                rule_info = rules_lookup[rule_id]
+                old_cat = violation.get("category", "")
+                old_subcat = violation.get("subcategory", "unknown")
+                old_weight = violation.get("weight", 1)
 
-                    if (
-                        old_cat != rule_info["category"]
-                        or old_subcat != rule_info["subcategory"]
-                        or old_weight != rule_info["weight"]
-                    ):
-                        updated_count += 1
+                violation["category"] = rule_info["category"]
+                violation["subcategory"] = rule_info["subcategory"]
+                violation["weight"] = rule_info["weight"]
+
+                if (
+                    old_cat != rule_info["category"]
+                    or old_subcat != rule_info["subcategory"]
+                    or old_weight != rule_info["weight"]
+                ):
+                    updated_count += 1
 
                 violations.append(violation)
 

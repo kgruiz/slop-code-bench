@@ -33,7 +33,6 @@ from slop_code.metrics.models import AstGrepViolation
 # Models - Summary
 from slop_code.metrics.models import CostsStats
 from slop_code.metrics.models import CyclomaticComplexityStats
-from slop_code.metrics.models import DeltaStats
 
 # Models - Quality
 from slop_code.metrics.models import FileMetrics
@@ -92,7 +91,6 @@ __all__ = [
     # Models - Summary
     "CostsStats",
     "CyclomaticComplexityStats",
-    "DeltaStats",
     "MetricStats",
     "PassRatesByType",
     "PassRatesStats",

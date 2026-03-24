@@ -44,20 +44,26 @@ def calculate_lint_metrics(source: Path) -> LintMetrics:
         )
         return LintMetrics(errors=0, fixable=0, counts={})
 
+    stdout = result.stdout.strip()
+    if not stdout:
+        return LintMetrics(errors=0, fixable=0, counts={})
+
     stats = None
-    stdout = result.stdout
     while stats is None and stdout:
         try:
             stats = json.loads(stdout)
             break
         except json.JSONDecodeError:
-            stdout = stdout.split("\n", 1)[1]
+            parts = stdout.split("\n", 1)
+            if len(parts) < 2:
+                break
+            stdout = parts[1]
 
-    if not stats:
+    if stats is None:
         logger.warning(
             "Failed to parse lint statistics",
             source=str(source),
-            stdout=stdout,
+            stdout=result.stdout,
         )
         return LintMetrics(errors=0, fixable=0, counts={})
 

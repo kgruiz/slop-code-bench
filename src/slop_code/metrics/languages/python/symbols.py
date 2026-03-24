@@ -75,6 +75,16 @@ def _count_statements(node: Node) -> int:
     return count
 
 
+def _count_sloc(node: Node) -> int:
+    """Count non-blank, non-comment lines inside a symbol span."""
+    sloc = 0
+    for raw_line in node.text.decode("utf-8").splitlines():
+        stripped = raw_line.strip()
+        if stripped and not stripped.startswith("#"):
+            sloc += 1
+    return sloc
+
+
 def _get_block_child(node: Node) -> Node | None:
     """Return the block child of a node if present."""
     for child in node.children:
@@ -651,6 +661,7 @@ def _create_symbol(
         _count_control_flow_and_comparisons(node)
     )
     lines = node.end_point[0] - node.start_point[0] + 1
+    sloc = _count_sloc(node)
 
     return SymbolMetrics(
         name=name,
@@ -670,6 +681,7 @@ def _create_symbol(
         comparisons=comparisons,
         max_nesting_depth=max_depth,
         lines=lines,
+        sloc=sloc,
         parent_class=parent_class,
         base_classes=base_classes,
         signature=signature,

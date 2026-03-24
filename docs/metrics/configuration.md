@@ -55,18 +55,7 @@ AST-grep rules detect code patterns using structural matching on the AST.
 
 ### Rule Location
 
-Rules are stored in `configs/ast-grep-rules/`:
-
-```
-configs/ast-grep-rules/
-├── naming.yaml       # Identifier quality issues
-├── safety.yaml       # Security and safety concerns
-├── style.yaml        # Code style violations
-├── types.yaml        # Type annotation issues
-├── complexity.yaml   # Structural complexity
-├── performance.yaml  # Performance anti-patterns
-└── verbosity.yaml    # Overly verbose code
-```
+Rules are stored in `configs/slop_rules.yaml`.
 
 ### Rule Format
 
@@ -80,7 +69,7 @@ severity: warning  # warning, error, info, hint
 message: "Human-readable description of the issue"
 metadata:
   weight: 2        # Severity weight (1-4)
-  category: naming # Category name
+  category: slop   # Slop rule family
 rule:
   kind: identifier  # AST node type to match
   regex: "_list$"   # Pattern to match
@@ -97,67 +86,51 @@ Weights indicate severity for weighted scoring:
 | 3 | Likely problem | Deep nesting, complex conditionals |
 | 4 | Bug or security risk | Bare except, dangerous patterns |
 
-### Categories
-
-| Category | Purpose | Example Issues |
-|----------|---------|----------------|
-| `naming` | Identifier quality | Type suffixes (`users_list`), generic names (`data`) |
-| `verbosity` | Redundant code | Excessive comments, obvious docstrings |
-| `safety` | Security/safety | Bare except, eval usage |
-| `complexity` | Structural complexity | Deep nesting, many branches |
-| `style` | Code style | Inconsistent patterns |
-| `types` | Type annotations | Missing or incorrect types |
-| `performance` | Performance | Inefficient patterns |
-
 ### Example Rules
 
-**Type suffix in name** (naming.yaml):
+**Manual sum loop** (`slop_rules.yaml`):
 ```yaml
 ---
-id: type-in-name
+id: manual-sum-loop
 language: python
 severity: warning
-message: "Variable name includes type suffix - redundant with type annotation"
+message: Manual accumulation loop - use sum(...) instead of a throwaway counter variable
 metadata:
-  weight: 1
-  category: naming
+  weight: 4
+  category: slop
 rule:
-  kind: identifier
-  regex: "_(list|dict|string|array|int|str|bool|set|tuple|map)$"
+  kind: for_statement
+  pattern: "for $ITEM in $ITER:\n    $TOTAL += $EXPR\n"
 ```
 
-**Generic placeholder name** (naming.yaml):
+**Redundant guard with same return** (`slop_rules.yaml`):
 ```yaml
 ---
-id: generic-placeholder-name
+id: redundant-guard-same-return
 language: python
 severity: warning
-message: "Generic variable name - use descriptive name"
+message: Guard returning the same expression in both paths adds dead ceremony
 metadata:
-  weight: 1
-  category: naming
+  weight: 4
+  category: slop
 rule:
-  kind: assignment
-  has:
-    kind: identifier
-    field: left
-    regex: "^(data|result|temp|item|output|value|obj|ret|res|tmp)$"
+  pattern: "if $COND: return $RET return $RET "
 ```
 
-### Overriding Rules Directory
+### Overriding Rules File
 
-Set the `AST_GREP_RULES_DIR` environment variable to use a different rules directory:
+Set the `AST_GREP_RULES_PATH` environment variable to use a different rules file:
 
 ```bash
-export AST_GREP_RULES_DIR=/path/to/custom/rules
+export AST_GREP_RULES_PATH=/path/to/custom/slop_rules.yaml
 slop-code run ...
 ```
 
 ### Writing Custom Rules
 
-1. Create a new YAML file in the rules directory (or add to existing)
+1. Edit `configs/slop_rules.yaml` or point `AST_GREP_RULES_PATH` at a custom file
 2. Use ast-grep pattern syntax for matching
-3. Assign appropriate weight and category
+3. Assign an appropriate weight
 
 **Pattern reference:**
 
@@ -188,7 +161,7 @@ sg scan --rule /path/to/rule.yaml path/to/code/
 
 Currently, all metrics run by default. To exclude specific categories from analysis:
 
-1. **Remove rule files**: Delete YAML files from `configs/ast-grep-rules/` to skip those checks
+1. **Edit `configs/slop_rules.yaml`**: Remove rules you do not want to count
 2. **Filter in analysis**: Post-process results to exclude unwanted metrics
 
 ## Metric Computation Options

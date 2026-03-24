@@ -157,8 +157,9 @@ This file contains aggregated metrics across the entire checkpoint. It's organiz
 | **classes** | count, method_counts_mean, attribute_counts_mean | Class structure |
 | **complexity** | cc_ratings, mi_ratings, cc_max, cc_mean | Complexity distribution |
 | **waste** | single_use_functions, trivial_wrappers, single_method_classes | Abstraction efficiency |
-| **redundancy** | clone_instances, clone_lines, clone_ratio_sum | Code duplication |
-| **ast_grep** | violations, category_counts, category_weighted | Pattern violations |
+| **redundancy** | clone_instances, clone_lines, clone_ratio_sum, cloned_sloc_lines | Code duplication |
+| **ast_grep** | violations, category_counts, category_weighted | Slop-rule violations |
+| **root** | verbosity_flagged_sloc_lines | Union coverage used by verbosity |
 | **graph** | node_count, edge_count, cyclic_dependency_mass | Dependency analysis |
 
 Example excerpt:
@@ -295,7 +296,7 @@ AST-grep pattern violations, one per line:
 | Field | Meaning |
 |-------|---------|
 | `rule_id` | Name of the pattern that was violated |
-| `category` | Category: verbosity, naming, safety, complexity, style, types, performance |
+| `category` | Always `slop` for the built-in ruleset |
 | `weight` | Severity: 1 (minor) to 4 (critical) |
 | `line` / `column` | Location in source code |
 

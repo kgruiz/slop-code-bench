@@ -2,7 +2,7 @@
 
 Tests all functions in slop_code.metrics.languages.python.ast_grep including:
 - Public API: calculate_ast_grep_metrics, build_ast_grep_rules_lookup
-- Helper functions: _is_sg_available, _get_ast_grep_rules_dir, _count_rules_in_file
+- Helper functions: _is_sg_available, _get_ast_grep_rules_path, _count_rules_in_file
 """
 
 from __future__ import annotations
@@ -15,7 +15,9 @@ from unittest.mock import patch
 import pytest
 
 from slop_code.metrics.languages.python import AST_GREP_RULES_DIR
+from slop_code.metrics.languages.python import AST_GREP_RULES_PATH
 from slop_code.metrics.languages.python import _get_ast_grep_rules_dir
+from slop_code.metrics.languages.python import _get_ast_grep_rules_path
 from slop_code.metrics.languages.python import _is_sg_available
 from slop_code.metrics.languages.python import calculate_ast_grep_metrics
 from slop_code.metrics.languages.python.ast_grep import (
@@ -54,62 +56,60 @@ class TestSgAvailability:
 # =============================================================================
 
 
-class TestGetAstGrepRulesDir:
-    """Tests for _get_ast_grep_rules_dir."""
+class TestGetAstGrepRulesPath:
+    """Tests for _get_ast_grep_rules_path."""
 
-    def test_default_rules_dir(self) -> None:
+    def test_default_rules_path(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
-            rules_dir = _get_ast_grep_rules_dir()
-            assert rules_dir.name == "ast-grep-rules"
-            assert "configs" in str(rules_dir)
+            rules_path = _get_ast_grep_rules_path()
+            assert rules_path.name == "slop_rules.yaml"
+            assert rules_path.parent.name == "configs"
+            assert "configs" in str(rules_path)
+            assert _get_ast_grep_rules_dir() == rules_path
 
     def test_env_override(self, tmp_path: Path) -> None:
-        custom_dir = tmp_path / "custom-rules"
-        custom_dir.mkdir()
-        with patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(custom_dir)}):
-            assert _get_ast_grep_rules_dir() == custom_dir
+        custom_file = tmp_path / "custom-rules.yaml"
+        custom_file.write_text("id: test-rule\n")
+        with patch.dict(
+            "os.environ", {"AST_GREP_RULES_PATH": str(custom_file)}
+        ):
+            assert _get_ast_grep_rules_path() == custom_file
 
-    def test_default_rules_dir_exists(self) -> None:
-        """Verify the default rules directory actually exists."""
-        assert AST_GREP_RULES_DIR.exists(), (
-            f"Expected {AST_GREP_RULES_DIR} to exist"
+    def test_default_rules_path_exists(self) -> None:
+        """Verify the default rules file actually exists."""
+        assert AST_GREP_RULES_PATH.exists(), (
+            f"Expected {AST_GREP_RULES_PATH} to exist"
         )
-        assert AST_GREP_RULES_DIR.is_dir()
+        assert AST_GREP_RULES_PATH.is_file()
+        assert AST_GREP_RULES_DIR == AST_GREP_RULES_PATH
 
 
 class TestBuildAstGrepRulesLookup:
     """Tests for build_ast_grep_rules_lookup."""
 
-    def test_includes_new_verbosity_rules(self) -> None:
+    def test_uses_curated_slop_ruleset(self) -> None:
         lookup = build_ast_grep_rules_lookup()
 
-        expected_rule_ids = {
-            "join-list-literal",
-            "join-list-comprehension",
+        included_rules = {
             "manual-sum-loop",
-            "manual-count-loop",
-            "set-add-loop",
-            "manual-dict-get-assign",
-            "newline-split",
-            "split-space-literal",
-            "frozenset-list-wrap",
-            "list-self-concat",
-            "manual-dict-counter-if-else",
-            "redundant-type-suffix-name",
-            "overqualified-variable-prefix",
-            "overlong-identifier",
-            "nested-if-pyramid",
-            "same-variable-if-ladder",
-            "tail-return-none",
-            "branch-assignment-ladder",
-            "long-elif-ladder",
-            "set-from-list-literal",
-            "triple-if-pyramid",
-            "state-comparison-ladder",
+            "guard-return-none",
+            "nested-if-no-else",
+            "json-roundtrip-dumps-loads",
+            "dict-str-any",
+            "object-type-annotation",
+        }
+        excluded_rules = {
+            "bare-except-pass",
+            "mutable-default-arg",
+            "pandas-iterrows",
+            "untyped-list-annotation",
         }
 
-        for rule_id in expected_rule_ids:
-            assert lookup[rule_id]["category"] == "verbosity"
+        for rule_id in included_rules:
+            assert lookup[rule_id]["category"] == "slop"
+            assert lookup[rule_id]["subcategory"] == "slop"
+        for rule_id in excluded_rules:
+            assert rule_id not in lookup
 
 
 # =============================================================================
@@ -140,7 +140,9 @@ class TestCalculateAstGrepMetrics:
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": "/nonexistent"}),
+            patch.dict(
+                "os.environ", {"AST_GREP_RULES_PATH": "/nonexistent.yaml"}
+            ),
         ):
             result = calculate_ast_grep_metrics(source)
 
@@ -149,15 +151,15 @@ class TestCalculateAstGrepMetrics:
 
     def test_returns_empty_when_no_rules(self, tmp_path: Path) -> None:
         source = _write(tmp_path, "test.py", "x = 1")
-        rules_dir = tmp_path / "empty-rules"
-        rules_dir.mkdir()
+        rules_path = tmp_path / "empty-rules.yaml"
+        rules_path.write_text("")
 
         with (
             patch(
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(rules_dir)}),
+            patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
         ):
             result = calculate_ast_grep_metrics(source)
 
@@ -176,10 +178,9 @@ def bad():
         pass
 """,
         )
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
+        rules_path = tmp_path / "rules.yaml"
         # Rule YAML includes metadata
-        (rules_dir / "bare-except-pass.yaml").write_text(
+        rules_path.write_text(
             "id: bare-except-pass\n"
             "language: python\n"
             "metadata:\n"
@@ -201,7 +202,7 @@ def bad():
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(rules_dir)}),
+            patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
                 "slop_code.metrics.languages.python.ast_grep.subprocess.run"
             ) as mock_run,
@@ -224,9 +225,8 @@ def bad():
 
     def test_aggregates_multiple_violations(self, tmp_path: Path) -> None:
         source = _write(tmp_path, "test.py", "x = 1")
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "test-rule.yaml").write_text("id: test-rule")
+        rules_path = tmp_path / "rules.yaml"
+        rules_path.write_text("id: test-rule")
 
         mock_output = "\n".join(
             [
@@ -244,7 +244,7 @@ def bad():
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(rules_dir)}),
+            patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
                 "slop_code.metrics.languages.python.ast_grep.subprocess.run"
             ) as mock_run,
@@ -261,9 +261,8 @@ def bad():
 
     def test_counts_multiple_rules_in_one_file(self, tmp_path: Path) -> None:
         source = _write(tmp_path, "test.py", "x = 1")
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "grouped.yaml").write_text(
+        rules_path = tmp_path / "rules.yaml"
+        rules_path.write_text(
             "---\n"
             "id: first-rule\n"
             "language: python\n"
@@ -292,7 +291,7 @@ def bad():
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(rules_dir)}),
+            patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
                 "slop_code.metrics.languages.python.ast_grep.subprocess.run"
             ) as mock_run,
@@ -310,9 +309,8 @@ def bad():
 
     def test_handles_subprocess_error_gracefully(self, tmp_path: Path) -> None:
         source = _write(tmp_path, "test.py", "x = 1")
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "test.yaml").write_text(
+        rules_path = tmp_path / "rules.yaml"
+        rules_path.write_text(
             "id: test\nlanguage: python\nrule:\n  pattern: 'x'"
         )
 
@@ -321,7 +319,7 @@ def bad():
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(rules_dir)}),
+            patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
                 "slop_code.metrics.languages.python.ast_grep.subprocess.run"
             ) as mock_run,
@@ -334,16 +332,15 @@ def bad():
 
     def test_handles_malformed_json_gracefully(self, tmp_path: Path) -> None:
         source = _write(tmp_path, "test.py", "x = 1")
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "test.yaml").write_text("id: test")
+        rules_path = tmp_path / "rules.yaml"
+        rules_path.write_text("id: test")
 
         with (
             patch(
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(rules_dir)}),
+            patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
                 "slop_code.metrics.languages.python.ast_grep.subprocess.run"
             ) as mock_run,
@@ -361,9 +358,8 @@ def bad():
         self, tmp_path: Path
     ) -> None:
         source = _write(tmp_path, "test.py", "x = 1")
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "test.yaml").write_text("id: test")
+        rules_path = tmp_path / "rules.yaml"
+        rules_path.write_text("id: test")
 
         # Missing 'range' field
         mock_output = '{"ruleId": "test", "severity": "warning"}'
@@ -373,7 +369,7 @@ def bad():
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(rules_dir)}),
+            patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
                 "slop_code.metrics.languages.python.ast_grep.subprocess.run"
             ) as mock_run,
@@ -389,16 +385,15 @@ def bad():
 
     def test_handles_empty_output(self, tmp_path: Path) -> None:
         source = _write(tmp_path, "test.py", "x = 1")
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "test.yaml").write_text("id: test")
+        rules_path = tmp_path / "rules.yaml"
+        rules_path.write_text("id: test")
 
         with (
             patch(
                 "slop_code.metrics.languages.python.ast_grep.shutil.which",
                 return_value="/usr/bin/sg",
             ),
-            patch.dict("os.environ", {"AST_GREP_RULES_DIR": str(rules_dir)}),
+            patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
                 "slop_code.metrics.languages.python.ast_grep.subprocess.run"
             ) as mock_run,

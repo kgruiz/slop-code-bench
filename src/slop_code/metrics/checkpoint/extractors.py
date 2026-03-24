@@ -65,17 +65,7 @@ def _compute_distributions(
     symbol_metrics_iter: Generator[dict, None, None],
     diff: dict | None,
 ) -> dict[str, Any]:
-    """Compute distribution metrics from file-level and symbol-level data.
-
-    This computes metrics that require iterating through individual files/symbols:
-    - Lines added/removed (for churn calculation)
-    - Function aggregates (LOC, comparisons, try/except scaffolds)
-
-    Args:
-        file_metrics_iter: Iterator over flat file metrics from files.jsonl.
-        symbol_metrics_iter: Iterator over flat symbol metrics from symbols.jsonl.
-        diff: Parsed diff.json or None.
-    """
+    """Compute metrics that require iterating through files or symbols."""
     lines_added = 0
     lines_removed = 0
 
@@ -93,47 +83,28 @@ def _compute_distributions(
 
     # Extract function metrics from symbols
     func_lines = []
-    func_comparisons = []
-    func_try_counts = []
-
     for s in symbol_metrics_iter:
         if s.get("type") in {"function", "method"}:
             func_lines.append(s["lines"])
-            func_comparisons.append(s["comparisons"])
-            func_try_counts.append(s["exception_scaffold"])
 
     return {
         "lines_added": lines_added,
         "lines_removed": lines_removed,
         "mean_func_loc": statistics.mean(func_lines) if func_lines else 0.0,
-        "comparisons": sum(func_comparisons),
-        "try_scaffold": sum(func_try_counts),
     }
 
 
 def _extract_ast_grep_categories(ast_grep: dict) -> dict[str, int]:
-    """Extract AST-grep violation counts by category.
+    """Extract AST-grep violation counts for the slop ruleset.
 
     Args:
         ast_grep: AST-grep metrics dictionary.
 
     Returns:
-        Dictionary of category violation counts with sg_ prefix.
+        Dictionary with the single exported slop violation count.
     """
-    categories = [
-        "verbosity",
-        "naming",
-        "performance",
-        "types",
-        "safety",
-        "style",
-        "complexity",
-    ]
     category_counts = ast_grep.get("category_counts", {})
-    return {
-        f"sg_{cat}_violations": category_counts.get(cat, 0)
-        for cat in categories
-    }
+    return {"sg_slop_violations": category_counts.get("slop", 0)}
 
 
 def _build_metrics_from_snapshot(
@@ -158,11 +129,13 @@ def _build_metrics_from_snapshot(
     waste = snapshot["waste"]
     redundancy = snapshot["redundancy"]
     ast_grep = snapshot["ast_grep"]
-    total_loc = lines["loc"]
+    source_loc = lines["loc"]
+    total_loc = lines["total_lines"]
 
     result: dict[str, Any] = {
         # Lines
         "loc": total_loc,
+        "sloc": source_loc,
         "total_lines": lines["total_lines"],
         "single_comments": lines["single_comment"],
         # Lint
@@ -190,35 +163,15 @@ def _build_metrics_from_snapshot(
         # Waste
         "single_use_functions": waste["single_use_functions"],
         "trivial_wrappers": waste["trivial_wrappers"],
-        "single_method_classes": waste["single_method_classes"],
+        "unused_variables": waste.get("unused_variables", 0),
         # Redundancy
-        "clone_instances": redundancy["clone_instances"],
         "clone_lines": redundancy["clone_lines"],
-        # Function distribution stats
-        "nesting_mean": functions["nesting_mean"],
-        "nesting_concentration": functions["nesting_concentration"],
-        "nesting_top20": functions.get("nesting_top20", 0.0),
-        "comparisons_mean": functions["comparisons_mean"],
-        "comparisons_concentration": functions["comparisons_concentration"],
-        "comparisons_top20": functions.get("comparisons_top20", 0.0),
-        "branches_mean": functions["branches_mean"],
-        "branches_concentration": functions["branches_concentration"],
-        "branches_top20": functions.get("branches_top20", 0.0),
-        "control_mean": functions["control_mean"],
-        "control_concentration": functions["control_concentration"],
-        "control_top20": functions.get("control_top20", 0.0),
-        # Size concentration
-        "lines_concentration": functions.get("lines_concentration", 0.0),
-        "lines_top20": functions.get("lines_top20", 0.0),
-        "statements_mean": functions.get("statements_mean", 0.0),
-        "statements_concentration": functions.get(
-            "statements_concentration", 0.0
-        ),
-        "statements_top20": functions.get("statements_top20", 0.0),
+        "cloned_sloc_lines": redundancy.get("cloned_sloc_lines", 0),
         # AST-grep
         "ast_grep_violations": ast_grep["violations"],
-        # Source file tracking
-        "source_file_count": snapshot.get("source_file_count", file_count),
+        "verbosity_flagged_sloc_lines": snapshot.get(
+            "verbosity_flagged_sloc_lines", 0
+        ),
     }
 
     # Add AST-grep category counts
@@ -226,8 +179,14 @@ def _build_metrics_from_snapshot(
 
     # Per-LOC normalized metrics
     if total_loc > 0:
-        result["ast_grep_per_loc"] = ast_grep["violations"] / total_loc
         result["lint_per_loc"] = lint["errors"] / total_loc
+        result["violation_pct"] = ast_grep.get("violation_lines", 0) / total_loc
+        result["cloned_pct"] = (
+            redundancy.get("cloned_sloc_lines", 0) / total_loc
+        )
+        result["verbosity_flagged_pct"] = (
+            snapshot.get("verbosity_flagged_sloc_lines", 0) / total_loc
+        )
 
     # Graph metrics (optional, may be None for non-Python)
     if graph := snapshot.get("graph"):
@@ -278,10 +237,9 @@ def get_evaluation_metrics(
         print(checkpoint_dir)
 
     return {
-        "pass_rate": total_passed / total_total,
+        "strict_pass_rate": total_passed / total_total,
         "core_pass_rate": pass_counts.get("Core", 0) / total_counts["Core"],
-        "checkpoint_pass_rate": checkpoint_passed / checkpoint_total,
-        "duration": metrics["duration"],
+        "isolated_pass_rate": checkpoint_passed / checkpoint_total,
         # Flattened tests
         "total_tests": total_total,
         "passed_tests": total_passed,
@@ -309,11 +267,11 @@ def get_inference_metrics(
     try:
         started = datetime.fromisoformat(metrics["started"])
         ended = datetime.fromisoformat(metrics["completed"])
-        elapsed = (ended - started).total_seconds()
+        duration = (ended - started).total_seconds()
         return {
             "started": started.isoformat(),
             "ended": ended.isoformat(),
-            "elapsed": elapsed,
+            "duration": duration,
             "cost": metrics["usage"]["cost"],
             "steps": metrics["usage"]["steps"],
             **metrics["usage"]["net_tokens"],

@@ -44,6 +44,5 @@ def compute_run_summary(
         pass_rates=aggregators.compute_pass_rates_stats(checkpoints, problems),
         cc=aggregators.compute_cc_stats(checkpoints),
         ratios=aggregators.compute_ratios_stats(checkpoints),
-        delta=aggregators.compute_delta_stats(checkpoints),
         **aggregators.compute_composite_scores(checkpoints),
     )

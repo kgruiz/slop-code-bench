@@ -11,5 +11,21 @@ Here are the steps you should always follow:
 3. Ensure it is 100% correct and you have covered all edge cases.
 4. Refactor to ensure the code is high quality.
 
+Here are the basic style rules you must follow: 
+- Make sure the code is documented appropriately so that it is easy to pick up. 
+- Minimize the following gotchas:
+  - Extra defensive checks or try/catch blocks that are abnormal.
+  - Casts to get around type checking
+  - Variables that are only used a single time after declaration.
+  - Extra comments that a human wouldn't add.
+  - Trivial wrappers
+  - Heavy nesting
+  - If/Else ladders
+  - A ton of helper methods
+- Follow best coding practices:
+  - Group functions into files based on related functionality
+  - Keep your code clean
+
+
 Your task is:
 {{ spec.strip() }}

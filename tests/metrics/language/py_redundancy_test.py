@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from textwrap import dedent
 
+import pytest
+
 from slop_code.metrics.languages.python import calculate_redundancy_metrics
 
 # =============================================================================
@@ -221,9 +223,30 @@ class TestCloneMetrics:
 
         metrics = calculate_redundancy_metrics(source)
 
-        # clone_ratio should be clone_lines / total_lines
+        # clone_ratio should be clone_lines / file SLOC
         if metrics.clone_lines > 0:
             assert 0.0 < metrics.clone_ratio <= 1.0
+
+    def test_clone_ratio_uses_sloc_denominator(self, tmp_path):
+        source = tmp_path / "test.py"
+        source.write_text(
+            dedent("""
+        def first():
+            # comment
+            if True:
+                return 1
+
+        def second():
+            # comment
+            if True:
+                return 1
+        """)
+        )
+
+        metrics = calculate_redundancy_metrics(source)
+
+        assert metrics.clone_lines == 8
+        assert metrics.clone_ratio == pytest.approx(1.0)
 
     def test_total_clone_instances(self, tmp_path):
         """Test total clone instances count."""

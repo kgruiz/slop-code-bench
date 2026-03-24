@@ -2061,6 +2061,7 @@ class TestSymbolMetricsFields:
         assert func.start_col >= 0
         assert func.end_col >= 0
         assert func.lines == func.end - func.start + 1
+        assert func.sloc == 11
 
         # Complexity
         assert func.complexity >= 1

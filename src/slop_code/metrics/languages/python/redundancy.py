@@ -1,4 +1,9 @@
-"""Code clone detection via AST hashing."""
+"""Code clone detection via AST hashing.
+
+Clones are measured in lines.  When clone groups overlap (e.g. a cloned
+function contains a cloned if-block), lines are deduplicated via a
+line-number union so no line is counted twice.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from slop_code.metrics.languages.python.constants import CLONE_NODE_TYPES
+from slop_code.metrics.languages.python.line_metrics import (
+    calculate_line_metrics,
+)
 from slop_code.metrics.languages.python.parser import get_python_parser
 from slop_code.metrics.languages.python.utils import read_python_code
 from slop_code.metrics.models import CodeClone
@@ -71,6 +79,7 @@ def detect_code_clones(source: Path, min_lines: int = 3) -> RedundancyMetrics:
 
     parser = get_python_parser()
     tree = parser.parse(code.encode("utf-8"))
+    source_lines = code.splitlines()
 
     groups: dict[str, list[tuple[Node, str, int]]] = {}
     stack = [tree.root_node]
@@ -88,7 +97,7 @@ def detect_code_clones(source: Path, min_lines: int = 3) -> RedundancyMetrics:
 
     clones: list[CodeClone] = []
     total_instances = 0
-    clone_lines = 0
+    clone_line_set: set[int] = set()
     for ast_hash, nodes in groups.items():
         if len(nodes) < 2:
             continue
@@ -106,15 +115,24 @@ def detect_code_clones(source: Path, min_lines: int = 3) -> RedundancyMetrics:
             )
         )
         total_instances += len(nodes)
-        clone_lines += sum(n[2] for n in nodes)
+        for n, _, _ in nodes:
+            clone_line_set.update(range(n.start_point[0], n.end_point[0] + 1))
 
-    total_lines = len(code.splitlines())
-    clone_ratio = (clone_lines / total_lines) if total_lines else 0.0
+    total_lines = calculate_line_metrics(source).loc
+    num_clone_lines = len(clone_line_set)
+    clone_sloc_lines = sum(
+        1
+        for line_number in clone_line_set
+        if line_number < len(source_lines)
+        and (stripped := source_lines[line_number].strip())
+        and not stripped.startswith("#")
+    )
+    clone_ratio = (clone_sloc_lines / total_lines) if total_lines else 0.0
 
     return RedundancyMetrics(
         clones=clones,
         total_clone_instances=total_instances,
-        clone_lines=clone_lines,
+        clone_lines=num_clone_lines,
         clone_ratio=clone_ratio,
     )
 

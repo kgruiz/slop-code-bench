@@ -18,75 +18,24 @@ def mock_config() -> dict:
     }
 
 
-class TestRunSummaryDeltaExtraction:
-    """Tests for delta extraction in compute_run_summary."""
+class TestRunSummaryDeltaRemoval:
+    """Tests for summary contract after delta removal."""
 
-    def test_extracts_deltas_from_checkpoints(self, mock_config):
-        """Test that summary reads delta.* keys from checkpoints."""
+    def test_does_not_serialize_delta_stats(self, mock_config):
         checkpoints = [
             {
                 "problem": "test",
                 "idx": 1,
-                "pass_rate": 0.8,
-                "total_tests": 10,
-                "passed_tests": 8,
-            },
-            {
-                "problem": "test",
-                "idx": 2,
-                "pass_rate": 1.0,
-                "total_tests": 10,
-                "passed_tests": 10,
-                "delta.lint_errors": 50.0,
+                "strict_pass_rate": 0.8,
+                "delta.loc": 50.0,
                 "delta.ast_grep_violations": -20.0,
-                "delta.cc_high_count": 25.0,
-                "delta.comparisons": 15.0,
-                "delta.new_violations_per_loc": 0.05,
-            },
+                "delta.churn_ratio": 0.1,
+            }
         ]
+
         summary = compute_run_summary(mock_config, checkpoints)
 
-        # Should have extracted the delta values
-        assert summary.delta.lint.mean == 50.0
-        assert summary.delta.ast_grep.mean == -20.0
-        assert summary.delta.complex.mean == 25.0
-        assert summary.delta.comparisons.mean == 15.0
-        assert summary.delta.rubric_non_carryover.mean == 0.05
-
-    def test_skips_inf_deltas(self, mock_config):
-        """Test that inf values are skipped in delta extraction."""
-        checkpoints = [
-            {"problem": "test", "idx": 1, "pass_rate": 0.8},
-            {
-                "problem": "test",
-                "idx": 2,
-                "pass_rate": 1.0,
-                "delta.lint_errors": float("inf"),
-            },
-            {
-                "problem": "test",
-                "idx": 3,
-                "pass_rate": 1.0,
-                "delta.lint_errors": 50.0,
-            },
-        ]
-        summary = compute_run_summary(mock_config, checkpoints)
-
-        # Should only include the non-inf value
-        assert summary.delta.lint.mean == 50.0
-        assert summary.delta.lint.count == 1
-
-    def test_empty_deltas_when_no_delta_keys(self, mock_config):
-        """Test that summary handles checkpoints without delta keys."""
-        checkpoints = [
-            {"problem": "test", "idx": 1, "pass_rate": 0.8},
-            {"problem": "test", "idx": 2, "pass_rate": 1.0},
-        ]
-        summary = compute_run_summary(mock_config, checkpoints)
-
-        # Should have empty stats (count=0)
-        assert summary.delta.lint.count == 0
-        assert summary.delta.lint.mean is None
+        assert "delta" not in summary.model_dump()
 
 
 class TestRunSummaryCounts:
@@ -95,9 +44,9 @@ class TestRunSummaryCounts:
     def test_counts_problems_and_checkpoints(self, mock_config):
         """Test that summary counts problems and checkpoints correctly."""
         checkpoints = [
-            {"problem": "prob1", "idx": 1, "pass_rate": 0.8},
-            {"problem": "prob1", "idx": 2, "pass_rate": 1.0},
-            {"problem": "prob2", "idx": 1, "pass_rate": 0.5},
+            {"problem": "prob1", "idx": 1, "strict_pass_rate": 0.8},
+            {"problem": "prob1", "idx": 2, "strict_pass_rate": 1.0},
+            {"problem": "prob2", "idx": 1, "strict_pass_rate": 0.5},
         ]
         summary = compute_run_summary(mock_config, checkpoints)
 
@@ -118,9 +67,24 @@ class TestRunSummaryCosts:
     def test_aggregates_costs(self, mock_config):
         """Test that summary aggregates costs correctly."""
         checkpoints = [
-            {"problem": "prob1", "idx": 1, "cost": 0.10, "pass_rate": 1.0},
-            {"problem": "prob1", "idx": 2, "cost": 0.20, "pass_rate": 1.0},
-            {"problem": "prob2", "idx": 1, "cost": 0.15, "pass_rate": 1.0},
+            {
+                "problem": "prob1",
+                "idx": 1,
+                "cost": 0.10,
+                "strict_pass_rate": 1.0,
+            },
+            {
+                "problem": "prob1",
+                "idx": 2,
+                "cost": 0.20,
+                "strict_pass_rate": 1.0,
+            },
+            {
+                "problem": "prob2",
+                "idx": 1,
+                "cost": 0.15,
+                "strict_pass_rate": 1.0,
+            },
         ]
         summary = compute_run_summary(mock_config, checkpoints)
 
@@ -139,26 +103,26 @@ class TestRunSummarySolveRates:
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
             },
             {
                 "problem": "prob1",
                 "idx": 2,
-                "pass_rate": 0.8,
-                "checkpoint_pass_rate": 0.8,
+                "strict_pass_rate": 0.8,
+                "isolated_pass_rate": 0.8,
             },
             {
                 "problem": "prob2",
                 "idx": 1,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
             },
             {
                 "problem": "prob2",
                 "idx": 2,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
             },
         ]
         summary = compute_run_summary(mock_config, checkpoints)
@@ -172,26 +136,26 @@ class TestRunSummarySolveRates:
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
             },
             {
                 "problem": "prob1",
                 "idx": 2,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
             },  # fully solved
             {
                 "problem": "prob2",
                 "idx": 1,
-                "pass_rate": 0.8,
-                "checkpoint_pass_rate": 0.8,
+                "strict_pass_rate": 0.8,
+                "isolated_pass_rate": 0.8,
             },
             {
                 "problem": "prob2",
                 "idx": 2,
-                "pass_rate": 0.9,
-                "checkpoint_pass_rate": 0.9,
+                "strict_pass_rate": 0.9,
+                "isolated_pass_rate": 0.9,
             },  # not fully solved
         ]
         summary = compute_run_summary(mock_config, checkpoints)
@@ -205,26 +169,26 @@ class TestRunSummarySolveRates:
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
             },
             {
                 "problem": "prob1",
                 "idx": 2,
-                "pass_rate": 0.5,
-                "checkpoint_pass_rate": 0.5,
+                "strict_pass_rate": 0.5,
+                "isolated_pass_rate": 0.5,
             },  # has at least one 1.0
             {
                 "problem": "prob2",
                 "idx": 1,
-                "pass_rate": 0.8,
-                "checkpoint_pass_rate": 0.8,
+                "strict_pass_rate": 0.8,
+                "isolated_pass_rate": 0.8,
             },
             {
                 "problem": "prob2",
                 "idx": 2,
-                "pass_rate": 0.9,
-                "checkpoint_pass_rate": 0.9,
+                "strict_pass_rate": 0.9,
+                "isolated_pass_rate": 0.9,
             },  # no 1.0
         ]
         summary = compute_run_summary(mock_config, checkpoints)
@@ -242,7 +206,7 @@ class TestRunSummaryPassRates:
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 0.8,
+                "strict_pass_rate": 0.8,
                 "total_tests": 10,
                 "passed_tests": 8,
                 "core_total": 5,
@@ -272,7 +236,7 @@ class TestRunSummaryPassRates:
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
                 "total_tests": 10,
                 "passed_tests": 10,
                 "core_total": 5,
@@ -287,7 +251,7 @@ class TestRunSummaryPassRates:
             {
                 "problem": "prob1",
                 "idx": 2,
-                "pass_rate": 0.9,
+                "strict_pass_rate": 0.9,
                 "total_tests": 20,
                 "passed_tests": 18,
                 "core_total": 5,
@@ -319,7 +283,7 @@ class TestRunSummaryPassRates:
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
                 "total_tests": 10,
                 "passed_tests": 10,
                 "core_total": 10,
@@ -332,7 +296,7 @@ class TestRunSummaryPassRates:
             {
                 "problem": "prob2",
                 "idx": 1,
-                "pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
                 "total_tests": 10,
                 "passed_tests": 10,
                 "core_total": 10,
@@ -345,7 +309,7 @@ class TestRunSummaryPassRates:
             {
                 "problem": "prob1",
                 "idx": 2,
-                "pass_rate": 0.8,
+                "strict_pass_rate": 0.8,
                 "total_tests": 20,
                 "passed_tests": 16,
                 "core_total": 10,
@@ -373,7 +337,7 @@ class TestRunSummaryPassRates:
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
                 "total_tests": 10,
                 "passed_tests": 10,
                 "core_total": 10,
@@ -384,7 +348,7 @@ class TestRunSummaryPassRates:
             {
                 "problem": "prob1",
                 "idx": 2,
-                "pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
                 "total_tests": 10,
                 "passed_tests": 10,
                 "core_total": 10,
@@ -409,7 +373,7 @@ class TestRunSummaryCcMetrics:
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
+                "strict_pass_rate": 1.0,
                 "cc_high_count": 5,
                 "high_cc_mean": 12.0,
                 "cc_max": 30,
@@ -417,7 +381,7 @@ class TestRunSummaryCcMetrics:
             {
                 "problem": "prob2",
                 "idx": 1,
-                "pass_rate": 0.8,
+                "strict_pass_rate": 0.8,
                 "cc_high_count": 3,
                 "high_cc_mean": 18.0,
                 "cc_max": 24,
@@ -435,76 +399,94 @@ class TestRunSummaryCcMetrics:
 class TestRunSummaryCompositeScores:
     """Tests for composite verbosity/erosion score aggregation."""
 
-    def test_erosion_uses_complexity_mass_gini(self, mock_config):
+    def test_uses_saved_checkpoint_verbosity_and_erosion(self, mock_config):
         checkpoints = [
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
-                "functions": 4,
-                "methods": 0,
-                "loc": 100,
-                "mass.complexity_concentration": 0.4,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
+                "verbosity": 0.95,
+                "erosion": 0.6,
+                "ast_grep_violations": 999,
+                "rubric_total_flags": 999,
+                "mass.high_cc_pct": 0.01,
             }
         ]
         summary = compute_run_summary(mock_config, checkpoints)
 
-        assert summary.erosion.mean == pytest.approx(0.4)
+        assert summary.verbosity.mean == pytest.approx(0.95)
+        assert summary.verbosity.count == 1
+        assert summary.erosion.mean == pytest.approx(0.6)
         assert summary.erosion.count == 1
 
-    def test_erosion_uses_only_complexity_mass_gini(self, mock_config):
+    def test_composites_ignore_raw_checkpoint_fields(self, mock_config):
         checkpoints = [
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
-                "functions": 4,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
+                "verbosity": 0.95,
+                "erosion": 0.2,
+                "loc": 1,
+                "clone_lines": 999,
+                "functions": 1,
                 "methods": 0,
-                "loc": 100,
-                "mass.complexity_concentration": 0.2,
+                "trivial_wrappers": 999,
+                "single_use_functions": 999,
+                "cc_concentration": 0.2,
+                "mass.high_cc_pct": 0.2,
             },
             {
                 "problem": "prob1",
                 "idx": 2,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
-                "functions": 4,
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
+                "verbosity": 0.35,
+                "erosion": 0.4,
+                "loc": 1,
+                "clone_lines": 999,
+                "functions": 1,
                 "methods": 0,
-                "loc": 100,
-                "mass.complexity_concentration": 0.4,
+                "trivial_wrappers": 999,
+                "single_use_functions": 999,
+                "cc_concentration": 0.4,
+                "mass.high_cc_pct": 0.4,
             },
         ]
         summary = compute_run_summary(mock_config, checkpoints)
 
         assert summary.erosion.count == 2
-        assert summary.erosion.mean == pytest.approx((0.2 + 0.4) / 2)
+        assert summary.erosion.mean == pytest.approx(0.3)
+        assert summary.verbosity.mean == pytest.approx((0.95 + 0.35) / 2)
 
-    def test_erosion_skips_out_of_range_values(self, mock_config):
+    def test_skips_missing_saved_composites(self, mock_config):
         checkpoints = [
             {
                 "problem": "prob1",
                 "idx": 1,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
-                "functions": 4,
-                "methods": 0,
-                "loc": 100,
-                "mass.complexity_concentration": 1.1,  # invalid (>1)
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
             },
             {
                 "problem": "prob1",
                 "idx": 2,
-                "pass_rate": 1.0,
-                "checkpoint_pass_rate": 1.0,
-                "functions": 4,
-                "methods": 0,
-                "loc": 100,
-                "mass.complexity_concentration": -0.1,  # invalid (<0)
+                "strict_pass_rate": 1.0,
+                "isolated_pass_rate": 1.0,
             },
         ]
         summary = compute_run_summary(mock_config, checkpoints)
 
         assert summary.erosion.count == 0
         assert summary.erosion.mean is None
+        assert summary.verbosity.mean is None
+
+    def test_time_is_empty_without_duration(self, mock_config):
+        summary = compute_run_summary(
+            mock_config,
+            [{"problem": "prob1", "idx": 1, "strict_pass_rate": 1.0}],
+        )
+
+        assert summary.time.checkpoint.mean is None
+        assert summary.time.problem.mean is None

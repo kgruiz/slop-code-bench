@@ -7,12 +7,20 @@ and file-level metrics aggregation.
 
 from __future__ import annotations
 
+import ast
 import fnmatch
 import json
 from collections import Counter
 from collections.abc import Callable
 from collections.abc import Generator
 from pathlib import Path
+from token import COMMENT
+from token import DEDENT
+from token import ENDMARKER
+from token import INDENT
+from token import NEWLINE
+from token import NL
+from tokenize import generate_tokens
 
 from slop_code.common import RUBRIC_FILENAME
 from slop_code.logging import get_logger
@@ -35,6 +43,15 @@ from slop_code.metrics.models import WasteAggregates
 from slop_code.metrics.quality_io import save_quality_metrics
 
 logger = get_logger(__name__)
+
+IGNORED_SLOC_TOKEN_TYPES = {
+    COMMENT,
+    DEDENT,
+    ENDMARKER,
+    INDENT,
+    NEWLINE,
+    NL,
+}
 
 
 def _calculate_file_metrics(
@@ -66,6 +83,7 @@ def _calculate_file_metrics(
     global_count = sum(1 for symbol in symbols if symbol.type == "variable")
     redundancy = language.redundancy(file_path) if language.redundancy else None
     waste = language.waste(file_path, symbols) if language.waste else None
+    type_check = language.type_check(file_path) if language.type_check else None
     ast_grep = language.ast_grep(file_path) if language.ast_grep else None
     return FileMetrics(
         symbols=symbols,
@@ -78,6 +96,7 @@ def _calculate_file_metrics(
         global_count=global_count,
         redundancy=redundancy,
         waste=waste,
+        type_check=type_check,
         ast_grep_violations=ast_grep.violations if ast_grep else [],
         ast_grep_rules_checked=ast_grep.rules_checked if ast_grep else 0,
     )
@@ -130,7 +149,6 @@ class _AggregateResult:
     def __init__(
         self,
         file_count: int,
-        source_file_count: int,
         symbols: SymbolAggregates,
         functions: FunctionStats,
         classes: ClassStats,
@@ -138,9 +156,9 @@ class _AggregateResult:
         waste: WasteAggregates,
         redundancy: RedundancyAggregates,
         ast_grep: AstGrepAggregates,
+        verbosity_flagged_sloc_lines: int,
     ):
         self.file_count = file_count
-        self.source_file_count = source_file_count
         self.symbols = symbols
         self.functions = functions
         self.classes = classes
@@ -148,10 +166,100 @@ class _AggregateResult:
         self.waste = waste
         self.redundancy = redundancy
         self.ast_grep = ast_grep
+        self.verbosity_flagged_sloc_lines = verbosity_flagged_sloc_lines
 
 
 HIGH_CC_THRESHOLD = 10
 EXTREME_CC_THRESHOLD = 30
+
+
+def _iter_docstring_ranges(tree: ast.AST) -> list[tuple[int, int]]:
+    """Return inclusive docstring line ranges for a parsed Python AST."""
+    ranges: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if not isinstance(first, ast.Expr):
+            continue
+        value = first.value
+        if not isinstance(value, ast.Constant) or not isinstance(
+            value.value, str
+        ):
+            continue
+        if value.lineno is None or value.end_lineno is None:
+            continue
+        ranges.append((value.lineno, value.end_lineno))
+    return ranges
+
+
+def _python_sloc_lines(source_path: Path) -> set[int]:
+    """Return 1-indexed SLOC lines for a Python source file."""
+    source = source_path.read_text()
+    source_lines = source.splitlines(keepends=True)
+    sloc_lines: set[int] = set()
+    for token in generate_tokens(iter(source_lines).__next__):
+        if token.type not in IGNORED_SLOC_TOKEN_TYPES:
+            sloc_lines.add(token.start[0])
+
+    tree = ast.parse(source)
+    for start, end in _iter_docstring_ranges(tree):
+        for line_no in range(start, end + 1):
+            sloc_lines.discard(line_no)
+    return sloc_lines
+
+
+def _fallback_sloc_lines(source_path: Path) -> set[int]:
+    """Return an approximate 1-indexed SLOC line set for non-Python files."""
+    sloc_lines: set[int] = set()
+    for line_no, line in enumerate(
+        source_path.read_text().splitlines(), start=1
+    ):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            sloc_lines.add(line_no)
+    return sloc_lines
+
+
+def _get_sloc_lines(source_path: Path) -> set[int]:
+    """Return 1-indexed SLOC lines for a source file."""
+    try:
+        if source_path.suffix == ".py":
+            return _python_sloc_lines(source_path)
+        return _fallback_sloc_lines(source_path)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return _fallback_sloc_lines(source_path)
+
+
+def _collect_clone_sloc_lines(
+    fm: FileMetrics, sloc_lines: set[int]
+) -> set[int]:
+    """Return the clone-covered SLOC lines for a file."""
+    if fm.redundancy is None:
+        return set()
+
+    cloned_lines: set[int] = set()
+    for clone in fm.redundancy.clones:
+        for start, end in clone.locations:
+            for line_no in range(start, end + 1):
+                if line_no in sloc_lines:
+                    cloned_lines.add(line_no)
+    return cloned_lines
+
+
+def _collect_ast_grep_sloc_lines(
+    fm: FileMetrics, sloc_lines: set[int]
+) -> set[int]:
+    """Return the AST-grep-covered SLOC lines for a file."""
+    flagged_lines: set[int] = set()
+    for violation in fm.ast_grep_violations:
+        start = violation.line + 1
+        end = violation.end_line + 1
+        for line_no in range(start, end + 1):
+            if line_no in sloc_lines:
+                flagged_lines.add(line_no)
+    return flagged_lines
 
 
 def _normalized_complexity(cc_values: list[int], max_cc: int = 50) -> float:
@@ -210,10 +318,6 @@ def _compute_function_stats(
     cc_values: list[int],
     depth_values: list[int],
     lines_values: list[int],
-    statements_values: list[int],
-    control_blocks_values: list[int],
-    branches_values: list[int],
-    comparisons_values: list[int],
 ) -> FunctionStats:
     """Compute pre-aggregated stats for functions/methods."""
     import statistics
@@ -247,47 +351,6 @@ def _compute_function_stats(
     # Lines stats (LOC per function)
     lines_sum = sum(lines_values)
     lines_mean = statistics.mean(lines_values) if lines_values else 0.0
-    lines_concentration = _concentration_score(lines_values)
-    lines_top20 = compute_top20_share([float(v) for v in lines_values])
-
-    # Statements stats (statements per function)
-    statements_sum = sum(statements_values)
-    statements_mean = (
-        statistics.mean(statements_values) if statements_values else 0.0
-    )
-    statements_concentration = _concentration_score(statements_values)
-    statements_top20 = compute_top20_share(
-        [float(v) for v in statements_values]
-    )
-
-    # Control blocks
-    control_blocks_sum = sum(control_blocks_values)
-
-    # Helper for distribution stats
-    def _dist_stats(
-        values: list[int], threshold: int
-    ) -> tuple[float, float, float, int]:
-        if not values:
-            return 0.0, 0.0, 0.0, 0
-        mean = statistics.mean(values)
-        conc = _concentration_score(values)
-        top20 = compute_top20_share([float(v) for v in values])
-        high = sum(1 for v in values if v > threshold)
-        return mean, conc, top20, high
-
-    # Compute distribution stats for each family
-    nesting_mean, nesting_conc, nesting_top20, nesting_high = _dist_stats(
-        depth_values, 3
-    )
-    comp_mean, comp_conc, comp_top20, comp_high = _dist_stats(
-        comparisons_values, 5
-    )
-    branch_mean, branch_conc, branch_top20, branch_high = _dist_stats(
-        branches_values, 5
-    )
-    ctrl_mean, ctrl_conc, ctrl_top20, ctrl_high = _dist_stats(
-        control_blocks_values, 5
-    )
 
     return FunctionStats(
         count=count,
@@ -305,30 +368,6 @@ def _compute_function_stats(
         depth_max=depth_max,
         lines_sum=lines_sum,
         lines_mean=lines_mean,
-        lines_concentration=lines_concentration,
-        lines_top20=lines_top20,
-        statements_sum=statements_sum,
-        statements_mean=statements_mean,
-        statements_concentration=statements_concentration,
-        statements_top20=statements_top20,
-        control_blocks_sum=control_blocks_sum,
-        # Distribution stats
-        nesting_mean=nesting_mean,
-        nesting_concentration=nesting_conc,
-        nesting_top20=nesting_top20,
-        nesting_high_count=nesting_high,
-        comparisons_mean=comp_mean,
-        comparisons_concentration=comp_conc,
-        comparisons_top20=comp_top20,
-        comparisons_high_count=comp_high,
-        branches_mean=branch_mean,
-        branches_concentration=branch_conc,
-        branches_top20=branch_top20,
-        branches_high_count=branch_high,
-        control_mean=ctrl_mean,
-        control_concentration=ctrl_conc,
-        control_top20=ctrl_top20,
-        control_high_count=ctrl_high,
     )
 
 
@@ -364,6 +403,7 @@ def _compute_class_stats(
 def compute_aggregates(
     file_metrics: dict[str, FileMetrics],
     source_files: set[str] | None,
+    snapshot_dir: Path,
     thresholds: MetricsThresholds | None = None,
 ) -> _AggregateResult:
     """Compute aggregate metrics from file metrics in a single pass.
@@ -380,8 +420,6 @@ def compute_aggregates(
         thresholds = MetricsThresholds()
 
     file_count = len(file_metrics)
-    source_file_count = len(source_files) if source_files else file_count
-
     # Initialize aggregates with zero values
     symbols = SymbolAggregates(
         total=0,
@@ -409,10 +447,8 @@ def compute_aggregates(
     waste = WasteAggregates(
         single_use_functions=0,
         trivial_wrappers=0,
-        single_method_classes=0,
     )
     redundancy = RedundancyAggregates(
-        clone_instances=0,
         clone_lines=0,
         clone_ratio_sum=0.0,
         files_with_clones=0,
@@ -427,20 +463,25 @@ def compute_aggregates(
     func_cc: list[int] = []
     func_depth: list[int] = []
     func_lines: list[int] = []
-    func_statements: list[int] = []
-    func_control_blocks: list[int] = []
-    func_branches: list[int] = []
-    func_comparisons: list[int] = []
     class_method_counts: list[int] = []
     class_attribute_counts: list[int] = []
+    verbosity_flagged_sloc_lines = 0
 
     # Single pass through all files
-    for fm in file_metrics.values():
+    for path_str, fm in file_metrics.items():
         symbols.update(fm)
         complexity.update(fm, thresholds)
         waste.update(fm)
         redundancy.update(fm)
         ast_grep.update(fm)
+        source_path = snapshot_dir / path_str
+        sloc_lines = _get_sloc_lines(source_path)
+        clone_sloc_lines = _collect_clone_sloc_lines(fm, sloc_lines)
+        ast_grep_sloc_lines = _collect_ast_grep_sloc_lines(fm, sloc_lines)
+        redundancy.cloned_sloc_lines += len(clone_sloc_lines)
+        verbosity_flagged_sloc_lines += len(
+            clone_sloc_lines | ast_grep_sloc_lines
+        )
 
         # Collect function/method metrics
         for sym in fm.symbols:
@@ -448,10 +489,6 @@ def compute_aggregates(
                 func_cc.append(sym.complexity)
                 func_depth.append(sym.max_nesting_depth)
                 func_lines.append(sym.lines)
-                func_statements.append(sym.statements)
-                func_control_blocks.append(sym.control_blocks)
-                func_branches.append(sym.branches)
-                func_comparisons.append(sym.comparisons)
             elif sym.type == "class":
                 if sym.method_count is not None:
                     class_method_counts.append(sym.method_count)
@@ -463,10 +500,6 @@ def compute_aggregates(
         func_cc,
         func_depth,
         func_lines,
-        func_statements,
-        func_control_blocks,
-        func_branches,
-        func_comparisons,
     )
     classes = _compute_class_stats(class_method_counts, class_attribute_counts)
 
@@ -476,7 +509,6 @@ def compute_aggregates(
 
     return _AggregateResult(
         file_count=file_count,
-        source_file_count=source_file_count,
         symbols=symbols,
         functions=functions,
         classes=classes,
@@ -484,6 +516,7 @@ def compute_aggregates(
         waste=waste,
         redundancy=redundancy,
         ast_grep=ast_grep,
+        verbosity_flagged_sloc_lines=verbosity_flagged_sloc_lines,
     )
 
 
@@ -618,14 +651,13 @@ def measure_snapshot_quality(
         graph_metrics = compute_graph_metrics(dependency_graph)
 
     # Compute aggregates using the dedicated function
-    agg = compute_aggregates(files_metrics, traced_source_files)
+    agg = compute_aggregates(files_metrics, traced_source_files, snapshot_dir)
 
     # Build file list for JSONL output
     file_metrics_list = list(files_metrics.values())
 
     snapshot = SnapshotMetrics(
         file_count=agg.file_count,
-        source_file_count=agg.source_file_count,
         lines=snapshot_line_metrics,
         lint=snapshot_lint_metrics,
         symbols=agg.symbols,
@@ -635,6 +667,7 @@ def measure_snapshot_quality(
         waste=agg.waste,
         redundancy=agg.redundancy,
         ast_grep=agg.ast_grep,
+        verbosity_flagged_sloc_lines=agg.verbosity_flagged_sloc_lines,
         graph=graph_metrics,
         source_files=traced_source_files,
     )

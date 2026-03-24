@@ -106,7 +106,7 @@ def build_single_run_heatmap(context: ChartContext) -> go.Figure:
     pivot_df = df.pivot_table(
         index="problem",
         columns=chkpt_col,
-        values="checkpoint_pass_rate",
+        values="isolated_pass_rate",
         aggfunc="max",  # If duplicates, taking max (True > False) is safe
     )
 

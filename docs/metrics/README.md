@@ -49,7 +49,7 @@ Results are saved to JSON/JSONL files in each checkpoint's `quality_analysis/` d
 | **LOC** | Lines of code (source lines, excluding blanks) |
 | **Cyclomatic Complexity (CC)** | Number of independent paths through code (A=1-5, F=41+) |
 | **Maintainability Index (MI)** | Composite score of code maintainability (A >= 19) |
-| **AST-grep Violations** | Pattern-based code quality issues (verbosity, safety, etc.) |
+| **AST-grep Violations** | Pattern-based slop-rule violations from `configs/slop_rules.yaml` |
 | **Waste** | Abstraction inefficiencies (trivial wrappers, single-use functions) |
 | **Clones** | Duplicate code blocks detected via AST hashing |
 | **Delta Metrics** | Percentage changes between checkpoints |
@@ -109,7 +109,7 @@ Delta metrics (prefixed with `delta.`) show percentage changes:
   - `CorrectnessResults`: Test result model
   - `GroupType`: Test categorization (CORE, FUNCTIONALITY, REGRESSION, ERROR)
   - `PassPolicy`: Success criteria
-- **AST-grep rules**: `configs/ast-grep-rules/`
+- **AST-grep rules**: `configs/slop_rules.yaml`
 - **Main entry points**:
   - Snapshot quality: `slop_code.metrics.driver.measure_snapshot_quality()`
   - Checkpoint metrics: `slop_code.metrics.checkpoint.driver.get_checkpoint_metrics()`

@@ -8,14 +8,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from slop_code.common import QUALITY_DIR
-from slop_code.common import SYMBOLS_QUALITY_SAVENAME
+from slop_code.metrics.checkpoint.composites import compute_checkpoint_erosion
+from slop_code.metrics.checkpoint.composites import compute_checkpoint_verbosity
 from slop_code.metrics.checkpoint.delta import compute_checkpoint_delta
 from slop_code.metrics.checkpoint.extractors import get_evaluation_metrics
 from slop_code.metrics.checkpoint.extractors import get_inference_metrics
 from slop_code.metrics.checkpoint.extractors import get_quality_metrics
 from slop_code.metrics.checkpoint.extractors import get_rubric_metrics
-from slop_code.metrics.checkpoint.mass import compute_mass_delta
 
 
 def get_checkpoint_metrics(
@@ -54,16 +53,16 @@ def get_checkpoint_metrics(
             metrics["rubric_total_flags"] / metrics["loc"]
         )
 
+    verbosity = compute_checkpoint_verbosity(metrics)
+    if verbosity is not None:
+        metrics["verbosity"] = verbosity
+
+    erosion = compute_checkpoint_erosion(metrics)
+    if erosion is not None:
+        metrics["erosion"] = erosion
+
     # Compute deltas from prior checkpoint
     delta = compute_checkpoint_delta(prior_metrics, metrics)
-
-    # Add mass deltas if prior checkpoint exists
-    if prior_checkpoint_dir is not None:
-        prior_symbols = (
-            prior_checkpoint_dir / QUALITY_DIR / SYMBOLS_QUALITY_SAVENAME
-        )
-        curr_symbols = checkpoint_dir / QUALITY_DIR / SYMBOLS_QUALITY_SAVENAME
-        delta.update(compute_mass_delta(prior_symbols, curr_symbols))
 
     return {
         "is_first": is_first,

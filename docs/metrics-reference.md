@@ -38,7 +38,7 @@ P1 = sum(c1_p1, c2_p1),  P2 = sum(c1_p2, c2_p2, c3_p2)  →  MetricStats
 | Meets core spec? | `pct_checkpoints_core_solved`, `pass_rates.checkpoint.core` |
 | Breaks prior work? | `pass_rates.checkpoint.regression` |
 | Cleaner code? | `ratios.lint.mean`, `ratios.ast_grep.mean`, `verbosity.mean` |
-| Quality degrades? | `delta.lint.mean`, `delta.complex.mean`, `erosion.mean` |
+| Quality degrades? | `delta.loc`, `delta.ast_grep_violations`, `delta.churn_ratio`, `erosion.mean` |
 | Cheaper end-to-end? | `costs.problem.mean`, `costs.total` |
 | Fewer steps? | `steps.checkpoint.mean` |
 
@@ -109,7 +109,6 @@ From `overall_quality.json` and file/symbol iteration.
 | `loc` | Source lines (excludes comments and blanks) |
 | `total_lines` | All lines including comments and blanks |
 | `files` | Total measured files |
-| `source_file_count` | Files traced from entrypoint |
 | `lines_added`, `lines_removed` | Diff from prior checkpoint |
 | `single_comments` | Single-line comment count |
 
@@ -135,21 +134,6 @@ Per function/method, radon scale.
 | `cc_normalized` | Normalized CC score |
 | `cc_concentration` | Gini of CC distribution (0=uniform, 1=concentrated) |
 
-### Distribution Metrics
-
-Each has `_mean` (average per function) and `_concentration` (Gini coefficient).
-
-| Metric | `_mean` | `_concentration` |
-|--------|---------|-------------------|
-| Nesting depth | `nesting_mean` | `nesting_concentration` |
-| Comparisons | `comparisons_mean` | `comparisons_concentration` |
-| Branches | `branches_mean` | `branches_concentration` |
-| Control flow | `control_mean` | `control_concentration` |
-| Lines | — | `lines_concentration` |
-| Statements | `statements_mean` | `statements_concentration` |
-
-Also: `max_nesting_depth` (max of any function), `comparisons` (total across all functions), `try_scaffold` (total try/except/finally blocks).
-
 ### Linting
 
 | Key | Description |
@@ -160,23 +144,26 @@ Also: `max_nesting_depth` (max of any function), `comparisons` (total across all
 
 ### AST-Grep Violations
 
-Rules in `configs/ast-grep-rules/`, weighted 1-4 per rule.
+Rules in `configs/slop_rules.yaml`, weighted 1-4 per rule.
 
 | Key | Description |
 |-----|-------------|
 | `ast_grep_violations` | Total violations |
-| `ast_grep_per_loc` | `violations / loc` |
-| `sg_{category}_violations` | Per-category counts: `verbosity`, `naming`, `performance`, `types`, `safety`, `style`, `complexity` |
+| `violation_pct` | AST-grep flagged lines / `loc` |
 
 ### Redundancy & Waste
 
 | Key | Description |
 |-----|-------------|
-| `clone_instances` | Code clone groups (duplicate AST subtrees) |
 | `clone_lines` | Total duplicated lines |
+| `cloned_sloc_lines` | Duplicated SLOC lines after filtering comments/docstrings |
+| `cloned_pct` | `cloned_sloc_lines / loc` |
+| `clone_ratio` | Cloned SLOC / file SLOC (per-file metric; aggregated separately) |
+| `verbosity_flagged_sloc_lines` | SLOC lines flagged by clone or AST-grep coverage union |
+| `verbosity_flagged_pct` | `verbosity_flagged_sloc_lines / loc` |
 | `single_use_functions` | Functions called only once |
 | `trivial_wrappers` | Functions that just delegate to another |
-| `single_method_classes` | Classes with one method |
+| `unused_variables` | Variables assigned but never read |
 
 ### Rubric (LLM Judge)
 
@@ -199,24 +186,16 @@ From `rubric.jsonl`. Each record is a violation flagged by an LLM judge.
 
 ### Mass Metrics
 
-Size-weighted cognitive load: `mass = max(0, value - baseline) * sqrt(statements)`.
-Baseline is 1 for complexity (CC=1 is trivial), 0 for all others.
+Size-weighted CC mass uses true symbol SLOC:
 
-For each of `complexity`, `branches`, `comparisons`, `vars_used`, `vars_defined`, `try_scaffold`:
-
-| Key | Description |
-|-----|-------------|
-| `mass.{metric}` | Total mass |
-| `mass.{metric}_concentration` | Gini of mass distribution |
-
-Additionally:
+```text
+mass.cc = sum(complexity * sqrt(symbol_sloc))
+```
 
 | Key | Description |
 |-----|-------------|
-| `mass.high_cc` | Mass in functions with CC > 10 |
-| `mass.high_cc_pct` | `mass.high_cc / mass.complexity * 100` |
-| `mass.top{50,75,90}_count` | Functions accounting for top N% of complexity mass |
-| `mass.top{50,75,90}_mass` | Mass in those functions |
+| `mass.cc` | Total CC mass across functions and methods |
+| `mass.high_cc_pct` | Percent of `mass.cc` contributed by functions/methods with `CC > 10` |
 
 ### Delta Metrics
 
@@ -227,41 +206,8 @@ Present for all checkpoints after the first.
 | Key | Description |
 |-----|-------------|
 | `delta.loc` | % change in LOC |
-| `delta.lint_errors` | % change in lint errors |
 | `delta.ast_grep_violations` | % change in AST-grep violations |
-| `delta.cc_high_count` | % change in high-CC function count |
-| `delta.comparisons` | % change in comparisons |
 | `delta.churn_ratio` | `(lines_added + lines_removed) / prior_total_lines` |
-| `delta.new_violations_per_loc` | `(rubric_total - rubric_carried_over) / loc` |
-
-### Delta Mass
-
-Symbols matched between checkpoints by key (`file:class.name`), then by signature/body/structure hash.
-
-**Complexity (full suite):**
-
-| Key | Description |
-|-----|-------------|
-| `delta.mass.complexity` | Net mass change (added - removed) |
-| `delta.mass.complexity_gross` | Total churn (added + removed) |
-| `delta.mass.complexity_net_to_gross_ratio` | Net / gross. ~0 = equal churn, ~1 = only additions. |
-| `delta.mass.complexity_added`, `_count`, `_concentration` | Added mass total, count of worsened functions, Gini |
-| `delta.mass.complexity_added_top{50,75,90}_count`, `_mass` | Top N% distribution of added mass |
-| `delta.mass.complexity_removed`, `_count`, `_concentration` | Removed mass total, count of simplified functions, Gini |
-
-**Other metrics** (`branches`, `comparisons`, `vars_used`, `vars_defined`, `try_scaffold`):
-
-| Key | Description |
-|-----|-------------|
-| `delta.mass.{metric}` | Net mass change |
-| `delta.mass.{metric}_added_top90_count`, `_mass` | Top 90% of added mass |
-
-**Distribution and symbol deltas:**
-
-| Key | Description |
-|-----|-------------|
-| `delta.mass.top{50,75,90}_count`, `_mass` | Change in top N% distribution |
-| `delta.symbols_added`, `_removed`, `_modified` | Function/method change counts |
 
 ---
 
@@ -323,22 +269,22 @@ Checkpoints with zero tests for a type are excluded from that type's average.
 |-----|------|-------------|
 | `cc.high_count`, `cc.high_mean`, `cc.max` | MetricStats | CC stats across checkpoints |
 | `ratios.rubric`, `ratios.lint`, `ratios.ast_grep` | MetricStats | `metric / loc` per checkpoint |
-| `delta.lint`, `delta.complex`, `delta.ast_grep`, `delta.comparisons` | MetricStats | % change between consecutive checkpoints (skipping inf) |
-| `delta.rubric_non_carryover` | MetricStats | `delta.new_violations_per_loc` values |
 
 ### Composite Scores
 
 **Verbosity** (code bloat):
 ```
-(ast_grep_violations + rubric_total_flags) / loc + trivial_wrappers / callables + single_use_functions / callables
+verbosity_flagged_pct
 ```
 
 **Erosion** (structural degradation):
 ```
-mass.complexity_concentration
+mass.high_cc_pct
 ```
 
 Where:
-- `mass.complexity_concentration` is Gini of complexity mass
+- `loc` is the repo's non-blank, non-comment LOC metric
+- `verbosity_flagged_pct` is the SLOC coverage of
+  `duplicate_lines ∪ ast_grep_flagged_lines`
 
 Both are `MetricStats` over per-checkpoint values.

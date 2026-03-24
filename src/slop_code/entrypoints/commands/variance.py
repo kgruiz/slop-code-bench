@@ -63,10 +63,10 @@ _T_CRIT_95: dict[int, float] = {
 
 
 CV_SUMMARY_METRICS: dict[str, str] = {
-    "Pass rate": "pass_rate.cv",
+    "Pass rate": "strict_pass_rate.cv",
     "Lint": "lint_per_loc.cv",
-    "Slop": "ast_grep_per_loc.cv",
-    "Lint+Slop": "normalized.lint_slop_per_loc.cv",
+    "Violation %": "violation_pct.cv",
+    "Lint+Violation %": "normalized.lint_violation_pct.cv",
     "LOC": "lines.loc.cv",
     "High CC count": "cc.high_count.cv",
 }
@@ -87,8 +87,7 @@ CORE_CI_DERIVATIONS: set[str] = {
 DELTA_CI_METRICS: dict[str, str] = {
     "delta.loc": "LOC delta",
     "delta.ast_grep_violations": "Slop delta",
-    "delta.lint_errors": "Lint delta",
-    "delta.new_violations_per_loc": "Lint+Slop delta",
+    "delta.churn_ratio": "Churn ratio",
 }
 CI_METRIC_LABELS: dict[str, str] = {
     **CORE_METRIC_LABELS,
@@ -298,12 +297,12 @@ def _metric_value(row: dict[str, Any], name: str) -> float | None:
             return None
         return float(flags) / float(loc)
 
-    if name == "normalized.lint_slop_per_loc":
+    if name == "normalized.lint_violation_pct":
         lint = row.get("lint_per_loc")
-        slop = row.get("ast_grep_per_loc")
-        if not _is_number(lint) or not _is_number(slop):
+        violation_pct = row.get("violation_pct")
+        if not _is_number(lint) or not _is_number(violation_pct):
             return None
-        return float(lint) + float(slop)
+        return float(lint) + float(violation_pct)
 
     if name.startswith("tests.") and name.endswith(".pass_rate"):
         bucket = name.split(".")[1]
@@ -389,15 +388,14 @@ def _build_metric_specs(
 ) -> list[MetricSpec]:
     if preset == VariancePreset.BASE:
         base_keys = [
-            "pass_rate",
+            "strict_pass_rate",
             "core_pass_rate",
-            "checkpoint_pass_rate",
+            "isolated_pass_rate",
             "cost",
-            "elapsed",
             "duration",
             "steps",
             "lint_per_loc",
-            "ast_grep_per_loc",
+            "violation_pct",
             "loc",
             "lines.churn",
             "lines.added",
@@ -408,10 +406,8 @@ def _build_metric_specs(
             "delta.cc_mean",
             "delta.cc_max",
             "delta.loc",
-            "delta.lint_errors",
             "delta.ast_grep_violations",
             "delta.churn_ratio",
-            "delta.new_violations_per_loc",
             "lint_errors",
             "ast_grep_violations",
             "rubric_total_flags",
@@ -425,9 +421,9 @@ def _build_metric_specs(
             k for k in available_numeric_keys if k.startswith("tests.")
         )
         specs = [
-            MetricSpec(name="pass_rate"),
+            MetricSpec(name="strict_pass_rate"),
             MetricSpec(name="core_pass_rate"),
-            MetricSpec(name="checkpoint_pass_rate"),
+            MetricSpec(name="isolated_pass_rate"),
         ]
         specs.extend(MetricSpec(name=k) for k in test_keys)
         for bucket in ["total", "core", "error", "functionality", "regression"]:
@@ -438,16 +434,11 @@ def _build_metric_specs(
             "slop.",
             "rubric.",
             "cc.",
-            "branches.",
-            "control_blocks.",
-            "nesting.",
-            "symbol_lines.",
             "symbols.",
             "waste.",
             "redundancy.",
             "lines.",
             "imports.",
-            "globals.",
             "normalized.",
             "delta.",
         )
@@ -472,7 +463,6 @@ def _build_derived_metric_names(
 ) -> list[str]:
     additive_keys = [
         "cost",
-        "elapsed",
         "duration",
         "steps",
         "input",
@@ -483,7 +473,11 @@ def _build_derived_metric_names(
     ]
 
     derived = [f"total.{k}" for k in additive_keys]
-    for metric in ["pass_rate", "core_pass_rate", "checkpoint_pass_rate"]:
+    for metric in [
+        "strict_pass_rate",
+        "core_pass_rate",
+        "isolated_pass_rate",
+    ]:
         derived.append(f"{metric}.mean_across_checkpoints")
         derived.append(f"{metric}.final")
 
@@ -546,9 +540,6 @@ def _compute_problem_cv_summary(
             if not checkpoints:
                 continue
 
-            first_row = group.runs[0].rows_by_problem_checkpoint.get(
-                (problem, checkpoints[0])
-            )
             ordered_rows = [
                 group.runs[0].rows_by_problem_checkpoint[(problem, ck)]
                 for ck in checkpoints

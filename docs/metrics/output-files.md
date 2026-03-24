@@ -108,17 +108,19 @@ Aggregated metrics for the entire snapshot. This is the primary file for checkpo
   "redundancy": {
     "clone_instances": 4,
     "clone_lines": 32,
+    "cloned_sloc_lines": 24,
     "clone_ratio_sum": 0.03,
     "files_with_clones": 2
   },
   "ast_grep": {
     "violations": 8,
-    "rules_checked": 21,
-    "counts": {"type-in-name": 2, "generic-placeholder-name": 3},
+    "rules_checked": 137,
+    "counts": {"manual-sum-loop": 2, "guard-return-none": 3},
     "weighted": 12,
-    "category_counts": {"naming": 5, "verbosity": 3},
-    "category_weighted": {"naming": 5, "verbosity": 7}
+    "category_counts": {"slop": 8},
+    "category_weighted": {"slop": 12}
   },
+  "verbosity_flagged_sloc_lines": 29,
   "graph": {
     "node_count": 8,
     "edge_count": 15,
@@ -141,8 +143,9 @@ Aggregated metrics for the entire snapshot. This is the primary file for checkpo
 | `classes` | Class statistics |
 | `complexity` | CC and MI distributions |
 | `waste` | Abstraction waste counts |
-| `redundancy` | Code clone aggregates |
-| `ast_grep` | Pattern violation aggregates |
+| `redundancy` | Code clone aggregates, including filtered cloned SLOC |
+| `ast_grep` | Slop-rule violation aggregates |
+| `verbosity_flagged_sloc_lines` | Union of cloned SLOC and AST-grep-flagged SLOC |
 | `graph` | Dependency graph metrics (optional) |
 
 ## files.jsonl
@@ -188,10 +191,10 @@ Per-file metrics in JSON Lines format (one JSON object per line).
   },
   "ast_grep_violations": [
     {
-      "rule_id": "type-in-name",
+      "rule_id": "manual-sum-loop",
       "severity": "warning",
-      "category": "naming",
-      "weight": 1,
+      "category": "slop",
+      "weight": 4,
       "line": 45,
       "column": 4,
       "end_line": 45,

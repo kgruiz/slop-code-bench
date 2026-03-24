@@ -10,8 +10,10 @@ from slop_code.metrics.languages.python.symbols import _get_block_child
 from slop_code.metrics.languages.python.symbols import _get_name_from_node
 from slop_code.metrics.languages.python.utils import read_python_code
 from slop_code.metrics.models import SingleUseFunction
+from slop_code.metrics.models import SingleUseVariable
 from slop_code.metrics.models import SymbolMetrics
 from slop_code.metrics.models import TrivialWrapper
+from slop_code.metrics.models import UnusedVariable
 from slop_code.metrics.models import WasteMetrics
 
 if TYPE_CHECKING:
@@ -132,6 +134,279 @@ def _is_trivial_wrapper(func_node: Node) -> tuple[bool, str | None]:
     return (True, wrapped) if wrapped else (False, None)
 
 
+_IGNORED_VARIABLE_NAMES = frozenset({"self", "cls", "_"})
+
+_ASSIGNMENT_TYPES = frozenset(
+    {
+        "assignment",
+        "augmented_assignment",
+        "annotated_assignment",
+    }
+)
+
+
+def _extract_parameter_names(func_node: Node) -> set[str]:
+    """Extract parameter names from a function_definition node."""
+    names: set[str] = set()
+    params_node = func_node.child_by_field_name("parameters")
+    if not params_node:
+        return names
+    for child in params_node.named_children:
+        if child.type == "identifier":
+            names.add(child.text.decode("utf-8"))
+        elif child.type in {
+            "typed_parameter",
+            "default_parameter",
+            "typed_default_parameter",
+        }:
+            name_node = child.child_by_field_name("name")
+            if name_node is None:
+                for subchild in child.children:
+                    if subchild.type == "identifier":
+                        name_node = subchild
+                        break
+            if name_node:
+                names.add(name_node.text.decode("utf-8"))
+        elif child.type in {"list_splat_pattern", "dictionary_splat_pattern"}:
+            for subchild in child.children:
+                if subchild.type == "identifier":
+                    names.add(subchild.text.decode("utf-8"))
+                    break
+    return names
+
+
+def _count_variable_occurrences(
+    block: Node,
+) -> dict[str, tuple[int, int, int]]:
+    """Count per-variable definitions and usages in a block.
+
+    Returns:
+        Dict mapping variable name to (def_count, use_count, first_def_line).
+    """
+    # {name: [def_count, use_count, first_def_line]}
+    counts: dict[str, list[int]] = {}
+
+    stack: list[tuple[Node, bool]] = [(block, False)]
+    while stack:
+        current, in_target = stack.pop()
+
+        if current.type in _ASSIGNMENT_TYPES:
+            target = current.child_by_field_name("left")
+            if target is None:
+                target = current.child_by_field_name("target")
+            if target:
+                stack.append((target, True))
+            value = current.child_by_field_name("right")
+            if value is None:
+                value = current.child_by_field_name("value")
+            if value:
+                stack.append((value, False))
+            type_node = current.child_by_field_name("type")
+            if type_node:
+                stack.append((type_node, False))
+            continue
+
+        if current.type == "identifier":
+            name = current.text.decode("utf-8")
+            if name not in counts:
+                counts[name] = [0, 0, current.start_point[0] + 1]
+            if in_target:
+                counts[name][0] += 1
+                counts[name][2] = current.start_point[0] + 1
+            else:
+                counts[name][1] += 1
+        else:
+            for child in reversed(current.children):
+                stack.append((child, in_target))
+
+    return {n: (c[0], c[1], c[2]) for n, c in counts.items()}
+
+
+def _find_single_use_variables(
+    root: Node, symbols: list[SymbolMetrics]
+) -> list[SingleUseVariable]:
+    """Find variables assigned exactly once and used exactly once."""
+    results: list[SingleUseVariable] = []
+
+    # Build a set of function/class line ranges to exclude from module-level scan
+    symbol_ranges: list[tuple[int, int, str]] = []
+    for sym in symbols:
+        if sym.type in ("function", "method", "class"):
+            symbol_ranges.append((sym.start, sym.end, sym.name))
+
+    # --- Per-function detection ---
+    func_nodes: list[tuple[str, Node]] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if current.type == "function_definition":
+            name = _get_name_from_node(current)
+            if name:
+                func_nodes.append((name, current))
+        stack.extend(current.children)
+
+    for func_name, func_node in func_nodes:
+        block = _get_block_child(func_node)
+        if block is None:
+            continue
+        param_names = _extract_parameter_names(func_node)
+        counts = _count_variable_occurrences(block)
+        for var_name, (defs, uses, def_line) in counts.items():
+            if var_name in param_names or var_name in _IGNORED_VARIABLE_NAMES:
+                continue
+            if defs == 1 and uses == 1:
+                results.append(
+                    SingleUseVariable(
+                        name=var_name, line=def_line, scope=func_name
+                    )
+                )
+
+    # --- Module-level detection ---
+    module_counts: dict[
+        str, list[int]
+    ] = {}  # {name: [def_count, use_count, def_line]}
+
+    for child in root.children:
+        # Only look at top-level statements, skip function/class definitions
+        if child.type in {
+            "function_definition",
+            "class_definition",
+            "decorated_definition",
+        }:
+            continue
+
+        sub_stack: list[tuple[Node, bool]] = [(child, False)]
+        while sub_stack:
+            current, in_target = sub_stack.pop()
+
+            if current.type in _ASSIGNMENT_TYPES:
+                target = current.child_by_field_name("left")
+                if target is None:
+                    target = current.child_by_field_name("target")
+                if target:
+                    sub_stack.append((target, True))
+                value = current.child_by_field_name("right")
+                if value is None:
+                    value = current.child_by_field_name("value")
+                if value:
+                    sub_stack.append((value, False))
+                type_node = current.child_by_field_name("type")
+                if type_node:
+                    sub_stack.append((type_node, False))
+                continue
+
+            if current.type == "identifier":
+                name = current.text.decode("utf-8")
+                if name not in module_counts:
+                    module_counts[name] = [0, 0, current.start_point[0] + 1]
+                if in_target:
+                    module_counts[name][0] += 1
+                    module_counts[name][2] = current.start_point[0] + 1
+                else:
+                    module_counts[name][1] += 1
+            else:
+                for ch in reversed(current.children):
+                    sub_stack.append((ch, in_target))
+
+    for var_name, (defs, uses, def_line) in module_counts.items():
+        if var_name in _IGNORED_VARIABLE_NAMES:
+            continue
+        if defs == 1 and uses == 1:
+            results.append(
+                SingleUseVariable(name=var_name, line=def_line, scope="module")
+            )
+
+    return results
+
+
+def _find_unused_variables(
+    root: Node, symbols: list[SymbolMetrics]
+) -> list[UnusedVariable]:
+    """Find variables assigned but never referenced."""
+    results: list[UnusedVariable] = []
+
+    # --- Per-function detection ---
+    func_nodes: list[tuple[str, Node]] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if current.type == "function_definition":
+            name = _get_name_from_node(current)
+            if name:
+                func_nodes.append((name, current))
+        stack.extend(current.children)
+
+    for func_name, func_node in func_nodes:
+        block = _get_block_child(func_node)
+        if block is None:
+            continue
+        param_names = _extract_parameter_names(func_node)
+        counts = _count_variable_occurrences(block)
+        for var_name, (defs, uses, def_line) in counts.items():
+            if var_name in param_names or var_name in _IGNORED_VARIABLE_NAMES:
+                continue
+            if defs >= 1 and uses == 0:
+                results.append(
+                    UnusedVariable(
+                        name=var_name, line=def_line, scope=func_name
+                    )
+                )
+
+    # --- Module-level detection ---
+    module_counts: dict[str, list[int]] = {}
+
+    for child in root.children:
+        if child.type in {
+            "function_definition",
+            "class_definition",
+            "decorated_definition",
+        }:
+            continue
+
+        sub_stack: list[tuple[Node, bool]] = [(child, False)]
+        while sub_stack:
+            current, in_target = sub_stack.pop()
+
+            if current.type in _ASSIGNMENT_TYPES:
+                target = current.child_by_field_name("left")
+                if target is None:
+                    target = current.child_by_field_name("target")
+                if target:
+                    sub_stack.append((target, True))
+                value = current.child_by_field_name("right")
+                if value is None:
+                    value = current.child_by_field_name("value")
+                if value:
+                    sub_stack.append((value, False))
+                type_node = current.child_by_field_name("type")
+                if type_node:
+                    sub_stack.append((type_node, False))
+                continue
+
+            if current.type == "identifier":
+                name = current.text.decode("utf-8")
+                if name not in module_counts:
+                    module_counts[name] = [0, 0, current.start_point[0] + 1]
+                if in_target:
+                    module_counts[name][0] += 1
+                    module_counts[name][2] = current.start_point[0] + 1
+                else:
+                    module_counts[name][1] += 1
+            else:
+                for ch in reversed(current.children):
+                    sub_stack.append((ch, in_target))
+
+    for var_name, (defs, uses, def_line) in module_counts.items():
+        if var_name in _IGNORED_VARIABLE_NAMES:
+            continue
+        if defs >= 1 and uses == 0:
+            results.append(
+                UnusedVariable(name=var_name, line=def_line, scope="module")
+            )
+
+    return results
+
+
 def detect_waste(source: Path, symbols: list[SymbolMetrics]) -> WasteMetrics:
     """Detect abstraction waste patterns."""
     code = read_python_code(source)
@@ -155,12 +430,18 @@ def detect_waste(source: Path, symbols: list[SymbolMetrics]) -> WasteMetrics:
         if symbol.type != "function":
             continue
         calls = call_sites.get(symbol.name, [])
-        if len(calls) <= 1:
+        # Exclude self-calls (recursion) — calls within the function's own body
+        external_calls = [
+            ln for ln in calls if not (symbol.start <= ln <= symbol.end)
+        ]
+        if len(external_calls) <= 1:
             single_use_functions.append(
                 SingleUseFunction(
                     name=symbol.name,
                     line=symbol.start,
-                    called_from_line=calls[0] if calls else None,
+                    called_from_line=external_calls[0]
+                    if external_calls
+                    else None,
                 )
             )
 
@@ -192,6 +473,9 @@ def detect_waste(source: Path, symbols: list[SymbolMetrics]) -> WasteMetrics:
         if symbol.type == "class" and symbol.method_count == 1
     ]
 
+    single_use_variables = _find_single_use_variables(tree.root_node, symbols)
+    unused_variables = _find_unused_variables(tree.root_node, symbols)
+
     return WasteMetrics(
         single_use_functions=single_use_functions,
         trivial_wrappers=trivial_wrappers,
@@ -199,6 +483,10 @@ def detect_waste(source: Path, symbols: list[SymbolMetrics]) -> WasteMetrics:
         single_use_count=len(single_use_functions),
         trivial_wrapper_count=len(trivial_wrappers),
         single_method_class_count=len(single_method_classes),
+        single_use_variables=single_use_variables,
+        single_use_variable_count=len(single_use_variables),
+        unused_variables=unused_variables,
+        unused_variable_count=len(unused_variables),
     )
 
 

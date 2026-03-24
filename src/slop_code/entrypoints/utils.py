@@ -355,19 +355,19 @@ def render_summary_table(summary: RunSummary, console: Console) -> None:
             "Mean lint:loc",
             summary.ratios.lint.format_display(4),
         )
-    if summary.ratios.ast_grep.count > 0:
+    if summary.ratios.violation_pct.count > 0:
         table.add_row(
-            "Mean ast_grep:loc",
-            summary.ratios.ast_grep.format_display(4),
+            "Mean violation pct",
+            summary.ratios.violation_pct.format_display(4),
         )
     if summary.verbosity.count > 0:
         table.add_row(
-            "Mean verbosity",
+            "Mean verbosity score",
             summary.verbosity.format_display(4),
         )
     if summary.erosion.count > 0:
         table.add_row(
-            "Mean erosion",
+            "Mean erosion score",
             summary.erosion.format_display(4),
         )
 

@@ -77,9 +77,6 @@ def save_quality_metrics(
                 "symbol_count": len(fm.symbols),
                 "ast_grep_violation_count": len(fm.ast_grep_violations),
                 "ast_grep_rules_checked": fm.ast_grep_rules_checked,
-                "clone_instances": (
-                    fm.redundancy.total_clone_instances if fm.redundancy else 0
-                ),
                 "clone_lines": fm.redundancy.clone_lines
                 if fm.redundancy
                 else 0,
@@ -92,8 +89,8 @@ def save_quality_metrics(
                 "trivial_wrapper_count": (
                     fm.waste.trivial_wrapper_count if fm.waste else 0
                 ),
-                "single_method_class_count": (
-                    fm.waste.single_method_class_count if fm.waste else 0
+                "unused_variable_count": (
+                    fm.waste.unused_variable_count if fm.waste else 0
                 ),
             }
             f.write(json.dumps(data) + "\n")

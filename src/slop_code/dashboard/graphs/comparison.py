@@ -46,11 +46,12 @@ def build_problem_comparison_chart(
             "Pass Rate: Functionality (%)",
             "Pass Rate: Regression (%)",
             "Pass Rate: Error (%)",
-            "Mass: Top 90% (% of Func)",
-            "Top-20% Share: Δ Complexity Mass",
-            "Δ Mass: Top 75% (# Func)",
-            "Δ Mass: Top 75%/ Total Complexity",
-            "Δ Mass: Percent Change",
+            "Mass: CC",
+            "Δ LOC (%)",
+            "Δ AST-grep (%)",
+            "Δ Churn Ratio",
+            "CC Concentration",
+            "Mass: CC",
         ),
         shared_xaxes=True,
         vertical_spacing=0.06,
@@ -149,24 +150,14 @@ def build_problem_comparison_chart(
         add_pass_rate_col("regression")
         add_pass_rate_col("error")
 
-        # Other derived metrics
-        def safe_div(a, b):
-            return (a / b.replace(0, 1)) * 100
-
-        run_df["_mass_top90_pct"] = safe_div(
-            run_df["mass.top90_count"],
-            run_df[["functions", "methods"]].sum(axis=1),
+        zeroes = pd.Series([0.0] * len(run_df), index=run_df.index)
+        run_df["_mass_cc"] = run_df.get("mass.cc", zeroes)
+        run_df["_delta_loc"] = run_df.get("delta.loc", zeroes)
+        run_df["_delta_ast_grep"] = run_df.get(
+            "delta.ast_grep_violations", zeroes
         )
-        run_df["_delta_mass_top90_pct"] = safe_div(
-            run_df["delta.mass.complexity_added_top90_count"],
-            run_df[["functions", "methods"]].sum(axis=1),
-        )
-        run_df["_delta_mass_top75_pct"] = safe_div(
-            run_df["delta.mass.top75_mass"], run_df["mass.complexity"]
-        )
-        run_df["_delta_mass_pct"] = safe_div(
-            run_df["delta.mass.complexity"], run_df["mass.complexity"]
-        )
+        run_df["_delta_churn_ratio"] = run_df.get("delta.churn_ratio", zeroes)
+        run_df["_cc_concentration"] = run_df.get("cc_concentration", zeroes)
 
         # Helper to add trace with potential aggregation
         def add_trace(col, row, col_idx, show_legend=False):
@@ -228,13 +219,13 @@ def build_problem_comparison_chart(
 
         # Row 5
         add_trace("_pr_error", 5, 1)
-        add_trace("_mass_top90_pct", 5, 2)
-        add_trace("delta.mass.complexity_added_top20", 5, 3)
+        add_trace("_mass_cc", 5, 2)
+        add_trace("_delta_loc", 5, 3)
 
         # Row 6
-        add_trace("_delta_mass_top90_pct", 6, 1)
-        add_trace("_delta_mass_top75_pct", 6, 2)
-        add_trace("_delta_mass_pct", 6, 3)
+        add_trace("_delta_ast_grep", 6, 1)
+        add_trace("_delta_churn_ratio", 6, 2)
+        add_trace("_cc_concentration", 6, 3)
 
     # Update y-axes titles
     fig.update_yaxes(title_text="Lines", row=1, col=1, gridcolor="lightgray")
@@ -259,6 +250,13 @@ def build_problem_comparison_chart(
         fig.update_yaxes(
             title_text="%", row=r, col=c, gridcolor="lightgray", range=[0, 105]
         )
+    fig.update_yaxes(title_text="Mass", row=5, col=2, gridcolor="lightgray")
+    fig.update_yaxes(title_text="%", row=5, col=3, gridcolor="lightgray")
+    fig.update_yaxes(title_text="%", row=6, col=1, gridcolor="lightgray")
+    fig.update_yaxes(title_text="Ratio", row=6, col=2, gridcolor="lightgray")
+    fig.update_yaxes(
+        title_text="Ratio", row=6, col=3, gridcolor="lightgray", range=[0, 1]
+    )
 
     # Update x-axes titles (only bottom row needs labels)
     for col in range(1, 4):

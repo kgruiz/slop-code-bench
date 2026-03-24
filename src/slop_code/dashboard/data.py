@@ -415,8 +415,8 @@ def process_checkpoint_row(row: dict[str, Any]) -> dict[str, Any]:
 
     processed = dict(row)
     processed["passed_chkpt"] = (
-        _full_pass(row.get("pass_rate"))
-        or _full_pass(row.get("checkpoint_pass_rate"))
+        _full_pass(row.get("strict_pass_rate"))
+        or _full_pass(row.get("isolated_pass_rate"))
         or (tests_total == tests_passed)
     )
     return processed

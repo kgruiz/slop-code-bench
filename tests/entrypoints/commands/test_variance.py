@@ -42,23 +42,35 @@ def test_discovers_runs_nested_under_model_dirs(tmp_path: Path) -> None:
     assert discovered == sorted([run_a, run_b])
 
 
-def test_metric_value_combines_lint_and_slop() -> None:
+def test_metric_value_combines_lint_and_violation_pct() -> None:
     row = {
         "lint_per_loc": 0.2,
-        "ast_grep_per_loc": 0.3,
+        "violation_pct": 0.3,
     }
 
-    value = _metric_value(row, "normalized.lint_slop_per_loc")
+    value = _metric_value(row, "normalized.lint_violation_pct")
 
     assert value == 0.5
 
 
-def test_metric_value_combines_lint_and_slop_missing_returns_none() -> None:
+def test_metric_value_combines_lint_and_violation_pct_missing_returns_none() -> (
+    None
+):
     row = {"lint_per_loc": 0.2}
 
-    value = _metric_value(row, "normalized.lint_slop_per_loc")
+    value = _metric_value(row, "normalized.lint_violation_pct")
 
     assert value is None
+
+
+def test_metric_value_reads_strict_and_isolated_pass_rates() -> None:
+    row = {
+        "strict_pass_rate": 0.7,
+        "isolated_pass_rate": 0.8,
+    }
+
+    assert _metric_value(row, "strict_pass_rate") == 0.7
+    assert _metric_value(row, "isolated_pass_rate") == 0.8
 
 
 def test_render_problem_cv_summary_splits_tables() -> None:
@@ -67,8 +79,8 @@ def test_render_problem_cv_summary_splits_tables() -> None:
         "sample": {
             "Pass rate": [0.3],
             "Lint": [0.1],
-            "Slop": [0.2],
-            "Lint+Slop": [0.4],
+            "Violation %": [0.2],
+            "Lint+Violation %": [0.4],
             "LOC": [0.5],
         }
     }
@@ -76,8 +88,8 @@ def test_render_problem_cv_summary_splits_tables() -> None:
         "sample": {
             "Pass rate": [0.05],
             "Lint": [0.01],
-            "Slop": [0.02],
-            "Lint+Slop": [0.04],
+            "Violation %": [0.02],
+            "Lint+Violation %": [0.04],
             "LOC": [0.05],
         }
     }

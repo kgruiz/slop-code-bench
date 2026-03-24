@@ -255,7 +255,7 @@ slop-code metrics variance [OPTIONS] PRESET RUNS_DIR
 |--------|------------------|
 | `base` | Pass rate, cost, duration, LOC, lint, slop, CC |
 | `tests` | Pass rates by test bucket (core, error, functionality) |
-| `quality` | All quality metrics (slop, rubric, CC, branches, etc.) |
+| `quality` | Quality metrics on the reduced surface: slop, rubric, CC, graph metrics, `mass.cc`, `mass.high_cc_pct`, and the surviving deltas (`delta.loc`, `delta.ast_grep_violations`, `delta.churn_ratio`) |
 
 ### Behavior
 

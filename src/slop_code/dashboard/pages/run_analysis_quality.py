@@ -109,23 +109,21 @@ def update_quality(run_path):
     )
 
     # Compute normalized metrics on the fly
-    if "comparisons" in df.columns and "loc" in df.columns:
-        df = df.copy()
-        df["_cmp_per_loc"] = df["comparisons"] / df["loc"].replace(0, 1)
-        df["_try_per_loc"] = df["try_scaffold"] / df["loc"].replace(0, 1)
-    else:
-        df = df.copy()
-        df["_cmp_per_loc"] = 0
-        df["_try_per_loc"] = 0
+    df = df.copy()
+    df["_mass_cc"] = df.get("mass.cc", 0)
+    df["_cc_concentration"] = df.get("cc_concentration", 0)
 
     cmp_loc_hist = build_histogram(
         df,
-        "_cmp_per_loc",
-        "Comparisons/LOC Distribution",
+        "_mass_cc",
+        "CC Mass Distribution",
         "#e377c2",
     )
     try_loc_hist = build_histogram(
-        df, "_try_per_loc", "Try/LOC Distribution", "#bcbd22"
+        df,
+        "_cc_concentration",
+        "CC Concentration Distribution",
+        "#bcbd22",
     )
 
     # Scatter

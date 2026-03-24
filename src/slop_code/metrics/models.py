@@ -162,6 +162,7 @@ class SymbolMetrics(BaseModel):
     comparisons: int = 0
     max_nesting_depth: int = 0
     lines: int = 0
+    sloc: int = 0
     method_count: int | None = None
     attribute_count: int | None = None
     # Location info
@@ -231,6 +232,7 @@ class FileMetrics(BaseModel):
     global_count: int = 0
     redundancy: RedundancyMetrics | None = None
     waste: WasteMetrics | None = None
+    type_check: TypeCheckMetrics | None = None
     ast_grep_violations: list[AstGrepViolation] = []
     ast_grep_rules_checked: int = 0
 
@@ -245,7 +247,10 @@ class CodeClone(BaseModel):
 
 
 class RedundancyMetrics(BaseModel):
-    """Per-file redundancy analysis results."""
+    """Per-file redundancy analysis results.
+
+    Clones are measured in lines (deduplicated by line number).
+    """
 
     clones: list[CodeClone]
     total_clone_instances: int
@@ -269,6 +274,22 @@ class TrivialWrapper(BaseModel):
     wraps: str
 
 
+class SingleUseVariable(BaseModel):
+    """A variable that is assigned once and used once."""
+
+    name: str
+    line: int
+    scope: str  # "module" or the enclosing function name
+
+
+class UnusedVariable(BaseModel):
+    """A variable that is assigned but never referenced."""
+
+    name: str
+    line: int
+    scope: str  # "module" or the enclosing function name
+
+
 class WasteMetrics(BaseModel):
     """Per-file abstraction waste analysis."""
 
@@ -278,6 +299,18 @@ class WasteMetrics(BaseModel):
     single_use_count: int
     trivial_wrapper_count: int
     single_method_class_count: int
+    single_use_variables: list[SingleUseVariable] = []
+    single_use_variable_count: int = 0
+    unused_variables: list[UnusedVariable] = []
+    unused_variable_count: int = 0
+
+
+class TypeCheckMetrics(BaseModel):
+    """Per-file type checking results from ty."""
+
+    errors: int
+    warnings: int
+    counts: dict[str, int]  # rule_id -> count
 
 
 class AstGrepViolation(BaseModel):
@@ -289,9 +322,9 @@ class AstGrepViolation(BaseModel):
         category: Overall category from rule filename (e.g., "verbosity", "safety").
         subcategory: Sub-category from rule metadata.category field.
         weight: Rule weight from metadata (1-4, higher = more important).
-        line: Starting line number (1-indexed).
+        line: Starting line number from ast-grep output (0-indexed).
         column: Starting column number (0-indexed).
-        end_line: Ending line number (1-indexed).
+        end_line: Ending line number from ast-grep output (0-indexed).
         end_column: Ending column number (0-indexed).
     """
 
@@ -346,40 +379,6 @@ class FunctionStats(BaseModel):
     # Lines stats (LOC per function)
     lines_sum: int = 0
     lines_mean: float = 0.0
-    lines_concentration: float = 0.0
-    lines_top20: float = 0.0
-    # Statements stats (statements per function)
-    statements_sum: int = 0
-    statements_mean: float = 0.0
-    statements_concentration: float = 0.0
-    statements_top20: float = 0.0
-    # Control blocks
-    control_blocks_sum: int = 0
-
-    # Distribution stats (mean, concentration, high_count)
-    # Nesting (threshold > 3)
-    nesting_mean: float = 0.0
-    nesting_concentration: float = 0.0
-    nesting_top20: float = 0.0
-    nesting_high_count: int = 0
-
-    # Comparisons (threshold > 5)
-    comparisons_mean: float = 0.0
-    comparisons_concentration: float = 0.0
-    comparisons_top20: float = 0.0
-    comparisons_high_count: int = 0
-
-    # Branches (threshold > 5)
-    branches_mean: float = 0.0
-    branches_concentration: float = 0.0
-    branches_top20: float = 0.0
-    branches_high_count: int = 0
-
-    # Control blocks (threshold > 5)
-    control_mean: float = 0.0
-    control_concentration: float = 0.0
-    control_top20: float = 0.0
-    control_high_count: int = 0
 
 
 class ClassStats(BaseModel):
@@ -477,28 +476,27 @@ class WasteAggregates(BaseModel):
 
     single_use_functions: int
     trivial_wrappers: int
-    single_method_classes: int
+    unused_variables: int = 0
 
     def update(self, fm: FileMetrics) -> None:
         """Update aggregates from a FileMetrics instance."""
         if fm.waste:
             self.single_use_functions += fm.waste.single_use_count
             self.trivial_wrappers += fm.waste.trivial_wrapper_count
-            self.single_method_classes += fm.waste.single_method_class_count
+            self.unused_variables += fm.waste.unused_variable_count
 
 
 class RedundancyAggregates(BaseModel):
     """Aggregate redundancy/clone detection metrics."""
 
-    clone_instances: int
     clone_lines: int
     clone_ratio_sum: float
     files_with_clones: int
+    cloned_sloc_lines: int = 0
 
     def update(self, fm: FileMetrics) -> None:
         """Update aggregates from a FileMetrics instance."""
         if fm.redundancy:
-            self.clone_instances += fm.redundancy.total_clone_instances
             self.clone_lines += fm.redundancy.clone_lines
             self.clone_ratio_sum += fm.redundancy.clone_ratio
             self.files_with_clones += 1
@@ -511,6 +509,7 @@ class AstGrepAggregates(BaseModel):
     rules_checked: int
     counts: dict[str, int] = {}
     weighted: int = 0
+    violation_lines: int = 0
     category_counts: dict[str, int] = {}
     category_weighted: dict[str, int] = {}
 
@@ -518,16 +517,35 @@ class AstGrepAggregates(BaseModel):
         """Update aggregates from a FileMetrics instance."""
         if fm.ast_grep_violations:
             self.violations += len(fm.ast_grep_violations)
+            flagged_lines: set[int] = set()
             for v in fm.ast_grep_violations:
                 self.counts[v.rule_id] = self.counts.get(v.rule_id, 0) + 1
                 self.weighted += v.weight
+                flagged_lines.update(range(v.line, v.end_line + 1))
                 self.category_counts[v.category] = (
                     self.category_counts.get(v.category, 0) + 1
                 )
                 self.category_weighted[v.category] = (
                     self.category_weighted.get(v.category, 0) + v.weight
                 )
+            self.violation_lines += len(flagged_lines)
         self.rules_checked = max(self.rules_checked, fm.ast_grep_rules_checked)
+
+
+class TypeCheckAggregates(BaseModel):
+    """Aggregate type checking metrics."""
+
+    errors: int
+    warnings: int
+    counts: dict[str, int] = {}
+
+    def update(self, fm: FileMetrics) -> None:
+        """Update aggregates from a FileMetrics instance."""
+        if fm.type_check:
+            self.errors += fm.type_check.errors
+            self.warnings += fm.type_check.warnings
+            for rule, count in fm.type_check.counts.items():
+                self.counts[rule] = self.counts.get(rule, 0) + count
 
 
 class GraphMetrics(BaseModel):
@@ -560,7 +578,6 @@ class SnapshotMetrics(BaseModel):
 
     Attributes:
         file_count: Total number of files measured.
-        source_file_count: Files traced from entrypoint (or file_count if None).
         lines: Aggregated line metrics across all files.
         lint: Aggregated lint metrics across all files.
         symbols: Symbol counts and totals across all files.
@@ -575,7 +592,6 @@ class SnapshotMetrics(BaseModel):
     """
 
     file_count: int
-    source_file_count: int
     lines: LineCountMetrics
     lint: LintMetrics
     symbols: SymbolAggregates
@@ -585,6 +601,7 @@ class SnapshotMetrics(BaseModel):
     waste: WasteAggregates
     redundancy: RedundancyAggregates
     ast_grep: AstGrepAggregates
+    verbosity_flagged_sloc_lines: int = 0
     graph: GraphMetrics | None = None
     source_files: set[str] | None = None
 
@@ -593,7 +610,6 @@ class SnapshotQualityReport(BaseModel):
     """Summary of quality metrics for a snapshot."""
 
     files: int
-    source_files: int
     overall_lines: LineCountMetrics
     lint_errors: int
     lint_fixable: int
@@ -610,7 +626,6 @@ class SnapshotQualityReport(BaseModel):
         """Create a report from snapshot metrics."""
         return cls(
             files=snapshot_metrics.file_count,
-            source_files=snapshot_metrics.source_file_count,
             overall_lines=snapshot_metrics.lines,
             lint_errors=snapshot_metrics.lint.errors,
             lint_fixable=snapshot_metrics.lint.fixable,
@@ -640,6 +655,7 @@ class LanguageSpec(BaseModel):
     mi: Callable[[Path], float]
     redundancy: Callable[[Path], RedundancyMetrics] | None = None
     waste: Callable[[Path, list[SymbolMetrics]], WasteMetrics] | None = None
+    type_check: Callable[[Path], TypeCheckMetrics] | None = None
     ast_grep: Callable[[Path], AstGrepMetrics] | None = None
 
 
@@ -751,17 +767,7 @@ class RatiosStats(BaseModel):
 
     rubric: MetricStats = Field(default_factory=MetricStats)
     lint: MetricStats = Field(default_factory=MetricStats)
-    ast_grep: MetricStats = Field(default_factory=MetricStats)
-
-
-class DeltaStats(BaseModel):
-    """Delta statistics between consecutive checkpoints."""
-
-    lint: MetricStats = Field(default_factory=MetricStats)
-    complex: MetricStats = Field(default_factory=MetricStats)
-    ast_grep: MetricStats = Field(default_factory=MetricStats)
-    comparisons: MetricStats = Field(default_factory=MetricStats)
-    rubric_non_carryover: MetricStats = Field(default_factory=MetricStats)
+    violation_pct: MetricStats = Field(default_factory=MetricStats)
 
 
 class RunSummary(BaseModel):
@@ -811,9 +817,6 @@ class RunSummary(BaseModel):
 
     # Quality ratios (per LOC): {rubric, lint, ast_grep}
     ratios: RatiosStats = Field(default_factory=RatiosStats)
-
-    # Delta stats between consecutive checkpoints
-    delta: DeltaStats = Field(default_factory=DeltaStats)
 
     # Composite quality scores
     verbosity: MetricStats = Field(default_factory=MetricStats)

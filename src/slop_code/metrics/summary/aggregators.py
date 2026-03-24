@@ -13,7 +13,6 @@ from typing import Any
 from slop_code.logging import get_logger
 from slop_code.metrics.models import CostsStats
 from slop_code.metrics.models import CyclomaticComplexityStats
-from slop_code.metrics.models import DeltaStats
 from slop_code.metrics.models import MetricStats
 from slop_code.metrics.models import PassRatesByType
 from slop_code.metrics.models import PassRatesStats
@@ -66,8 +65,12 @@ def compute_time_stats(
     problems: dict[str, list[dict[str, Any]]],
 ) -> TimeStats:
     """Compute time statistics at checkpoint and problem levels."""
-    checkpoint_times = extract_metric_values(checkpoints, "elapsed")
-    problem_times = aggregate_per_problem(problems, "elapsed")
+    checkpoint_times = extract_metric_values(checkpoints, "duration")
+    problem_times = [
+        sum(float(c["duration"]) for c in chkpts if "duration" in c)
+        for chkpts in problems.values()
+        if any("duration" in c for c in chkpts)
+    ]
 
     return TimeStats(
         checkpoint=compute_metric_stats(checkpoint_times),
@@ -131,9 +134,9 @@ def compute_solve_rates(
     Returns:
         Dict with pct_checkpoints_solved, pct_problems_solved, pct_problems_partial.
     """
-    pass_rates_list = extract_metric_values(checkpoints, "pass_rate")
+    pass_rates_list = extract_metric_values(checkpoints, "strict_pass_rate")
     iso_pass_rates_list = extract_metric_values(
-        checkpoints, "checkpoint_pass_rate"
+        checkpoints, "isolated_pass_rate"
     )
     core_pass_rates_list = extract_metric_values(checkpoints, "core_pass_rate")
 
@@ -151,13 +154,13 @@ def compute_solve_rates(
     fully_solved = sum(
         1
         for chkpts in problems.values()
-        if (rates := [c.get("pass_rate", 0.0) for c in chkpts])
+        if (rates := [c.get("strict_pass_rate", 0.0) for c in chkpts])
         and all(pr == 1.0 for pr in rates)
     )
     partially_solved = sum(
         1
         for chkpts in problems.values()
-        if (rates := [c.get("pass_rate", 0.0) for c in chkpts])
+        if (rates := [c.get("strict_pass_rate", 0.0) for c in chkpts])
         and any(pr == 1.0 for pr in rates)
     )
 
@@ -262,104 +265,29 @@ def compute_ratios_stats(checkpoints: list[dict[str, Any]]) -> RatiosStats:
         checkpoints, "rubric_total_flags", "loc"
     )
     lint_ratios = compute_ratio_values(checkpoints, "lint_errors", "loc")
-    ast_grep_ratios = compute_ratio_values(
-        checkpoints, "ast_grep_violations", "loc"
-    )
+    violation_pct_values = extract_metric_values(checkpoints, "violation_pct")
 
     return RatiosStats(
         rubric=compute_metric_stats(rubric_ratios),
         lint=compute_metric_stats(lint_ratios),
-        ast_grep=compute_metric_stats(ast_grep_ratios),
-    )
-
-
-def compute_delta_stats(checkpoints: list[dict[str, Any]]) -> DeltaStats:
-    """Compute delta statistics between consecutive checkpoints."""
-
-    def extract_delta_values(key: str) -> list[float]:
-        """Extract delta.{key} values from checkpoints (skipping None/inf)."""
-        values: list[float] = []
-        for chkpt in checkpoints:
-            val = chkpt.get(f"delta.{key}")
-            if val is not None and val != float("inf"):
-                values.append(val)
-        return values
-
-    return DeltaStats(
-        lint=compute_metric_stats(extract_delta_values("lint_errors")),
-        complex=compute_metric_stats(extract_delta_values("cc_high_count")),
-        comparisons=compute_metric_stats(extract_delta_values("comparisons")),
-        ast_grep=compute_metric_stats(
-            extract_delta_values("ast_grep_violations")
-        ),
-        rubric_non_carryover=compute_metric_stats(
-            extract_delta_values("new_violations_per_loc")
-        ),
+        violation_pct=compute_metric_stats(violation_pct_values),
     )
 
 
 def compute_composite_scores(
     checkpoints: list[dict[str, Any]],
 ) -> dict[str, MetricStats]:
-    """Compute verbosity and erosion composite scores.
-
-    Verbosity measures code bloat: flags per LOC + wrapper/single-use ratios.
-    Erosion measures structural degradation: complexity mass gini.
-    """
-    verbosity_values: list[float] = []
-    erosion_values: list[float] = []
-
-    for chkpt in checkpoints:
-        loc = chkpt.get("loc", 0)
-        funcs = chkpt.get("functions", 0)
-        methods = chkpt.get("methods", 0)
-        total_callables = funcs + methods
-
-        # Verbosity: (ast_grep + rubric) / loc + wrapper_ratios
-        if loc > 0 and total_callables > 0:
-            flags_per_loc = (
-                chkpt.get("ast_grep_violations", 0)
-                + chkpt.get("rubric_total_flags", 0)
-            ) / loc
-            wrapper_ratio = chkpt.get("trivial_wrappers", 0) / total_callables
-            single_use_ratio = (
-                chkpt.get("single_use_functions", 0) / total_callables
-            )
-            verbosity_values.append(
-                flags_per_loc + wrapper_ratio + single_use_ratio
-            )
-
-        # Structural erosion requires complexity mass gini.
-        complexity_concentration = chkpt.get("mass.complexity_concentration")
-        if complexity_concentration is None:
-            logger.warning(
-                "Skipping erosion for checkpoint with missing complexity mass gini",
-                problem=chkpt.get("problem"),
-                checkpoint=chkpt.get("checkpoint"),
-                idx=chkpt.get("idx"),
-            )
-            continue
-
-        if not isinstance(complexity_concentration, int | float):
-            logger.warning(
-                "Skipping erosion for checkpoint with non-numeric complexity mass gini",
-                problem=chkpt.get("problem"),
-                checkpoint=chkpt.get("checkpoint"),
-                idx=chkpt.get("idx"),
-            )
-            continue
-
-        if not (0.0 <= complexity_concentration <= 1.0):
-            logger.warning(
-                "Skipping erosion for checkpoint with out-of-range complexity mass gini",
-                problem=chkpt.get("problem"),
-                checkpoint=chkpt.get("checkpoint"),
-                idx=chkpt.get("idx"),
-                complexity_concentration=complexity_concentration,
-            )
-            continue
-
-        erosion_values.append(complexity_concentration)
+    """Compute summary stats from checkpoint-owned composite scores."""
+    verbosity_values = [
+        float(value)
+        for value in extract_metric_values(checkpoints, "verbosity")
+        if isinstance(value, int | float)
+    ]
+    erosion_values = [
+        float(value)
+        for value in extract_metric_values(checkpoints, "erosion")
+        if isinstance(value, int | float)
+    ]
 
     return {
         "verbosity": compute_metric_stats(verbosity_values),

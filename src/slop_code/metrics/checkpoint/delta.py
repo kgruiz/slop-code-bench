@@ -13,10 +13,7 @@ from typing import Any
 # Only keys that are actually consumed by dashboard/summary/variance.
 DELTA_METRIC_KEYS: tuple[str, ...] = (
     "loc",
-    "lint_errors",
     "ast_grep_violations",
-    "cc_high_count",
-    "comparisons",
 )
 
 
@@ -87,15 +84,5 @@ def compute_checkpoint_delta(
     churn = curr_metrics["lines_added"] + curr_metrics["lines_removed"]
     prev_total_lines = prev_metrics["total_lines"]
     result["delta.churn_ratio"] = safe_ratio(churn, prev_total_lines)
-
-    # Compute new violations per LOC if rubric metrics exist
-    if "rubric_total_flags" in curr_metrics:
-        new_flags = (
-            curr_metrics["rubric_total_flags"]
-            - curr_metrics["rubric_carried_over"]
-        )
-        result["delta.new_violations_per_loc"] = safe_ratio(
-            new_flags, curr_metrics["loc"]
-        )
 
     return result

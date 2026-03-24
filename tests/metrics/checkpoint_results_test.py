@@ -60,14 +60,16 @@ class TestGetEvaluationMetrics:
     def test_pass_rates(self, sample_eval_file: Path):
         result = get_evaluation_metrics(sample_eval_file)
 
-        assert result["pass_rate"] == 6 / 9
+        assert result["strict_pass_rate"] == 6 / 9
         assert result["core_pass_rate"] == 1.0
-        # checkpoint_pass_rate excludes regression
-        assert result["checkpoint_pass_rate"] == 6 / 8
+        # isolated_pass_rate excludes regression
+        assert result["isolated_pass_rate"] == 6 / 8
+        assert "pass_rate" not in result
+        assert "checkpoint_pass_rate" not in result
 
-    def test_duration(self, sample_eval_file: Path):
+    def test_no_duration_in_eval(self, sample_eval_file: Path):
         result = get_evaluation_metrics(sample_eval_file)
-        assert result["duration"] == 5.5
+        assert "duration" not in result
 
     def test_missing_file(self, tmp_path: Path):
         result = get_evaluation_metrics(tmp_path)
@@ -206,14 +208,6 @@ def _create_quality_test_files(tmp_path: Path, files_data: dict) -> Path:
         f.get("waste", {}).get("trivial_wrapper_count", 0)
         for f in files_data.values()
     )
-    total_single_method_classes = sum(
-        f.get("waste", {}).get("single_method_class_count", 0)
-        for f in files_data.values()
-    )
-    total_clone_instances = sum(
-        f.get("redundancy", {}).get("total_clone_instances", 0)
-        for f in files_data.values()
-    )
     total_clone_lines = sum(
         f.get("redundancy", {}).get("clone_lines", 0)
         for f in files_data.values()
@@ -228,6 +222,10 @@ def _create_quality_test_files(tmp_path: Path, files_data: dict) -> Path:
     )
     total_ast_grep_violations = sum(
         f.get("ast_grep", {}).get("total_violations", 0)
+        for f in files_data.values()
+    )
+    total_ast_grep_violation_lines = sum(
+        f.get("ast_grep", {}).get("violation_lines", 0)
         for f in files_data.values()
     )
     ast_grep_rules_checked = max(
@@ -249,7 +247,6 @@ def _create_quality_test_files(tmp_path: Path, files_data: dict) -> Path:
     # Build SnapshotMetrics-compatible structure (no "aggregates" wrapper)
     quality_data = {
         "file_count": file_count,
-        "source_file_count": file_count,
         "lines": {
             "total_lines": total_lines,
             "loc": total_loc,
@@ -297,27 +294,12 @@ def _create_quality_test_files(tmp_path: Path, files_data: dict) -> Path:
             "extreme_cc_mean": 0.0,
             "cc_normalized": 0.0,
             "cc_concentration": 0.0,
+            "cc_top20": 0.0,
             "depth_max": max(func_depths) if func_depths else 0,
             "lines_sum": sum(func_lines) if func_lines else 0,
             "lines_mean": (
                 sum(func_lines) / len(func_lines) if func_lines else 0.0
             ),
-            "control_blocks_sum": (
-                sum(func_control_blocks) if func_control_blocks else 0
-            ),
-            # Distribution stats
-            "nesting_mean": 0.0,
-            "nesting_concentration": 0.0,
-            "nesting_high_count": 0,
-            "comparisons_mean": 0.0,
-            "comparisons_concentration": 0.0,
-            "comparisons_high_count": 0,
-            "branches_mean": 0.0,
-            "branches_concentration": 0.0,
-            "branches_high_count": 0,
-            "control_mean": 0.0,
-            "control_concentration": 0.0,
-            "control_high_count": 0,
         },
         "classes": {
             "count": len(class_method_counts),
@@ -350,16 +332,16 @@ def _create_quality_test_files(tmp_path: Path, files_data: dict) -> Path:
         "waste": {
             "single_use_functions": total_single_use_functions,
             "trivial_wrappers": total_trivial_wrappers,
-            "single_method_classes": total_single_method_classes,
+            "unused_variables": 0,
         },
         "redundancy": {
-            "clone_instances": total_clone_instances,
             "clone_lines": total_clone_lines,
             "clone_ratio_sum": clone_ratio_sum,
             "files_with_clones": files_with_clones,
         },
         "ast_grep": {
             "violations": total_ast_grep_violations,
+            "violation_lines": total_ast_grep_violation_lines,
             "rules_checked": ast_grep_rules_checked,
             "counts": {},
         },
@@ -441,6 +423,7 @@ def _create_quality_test_files(tmp_path: Path, files_data: dict) -> Path:
                     "comparisons": s.get("comparisons", 0),
                     "max_nesting_depth": s.get("max_nesting_depth", 0),
                     "lines": s.get("lines", 0),
+                    "sloc": s.get("sloc", s.get("lines", 0)),
                     "method_count": s.get("method_count"),
                     "attribute_count": s.get("attribute_count"),
                 }
@@ -474,6 +457,7 @@ class TestGetQualityMetrics:
                         "control_blocks": 2,
                         "max_nesting_depth": 2,
                         "lines": 15,
+                        "sloc": 9,
                         "comparisons": 1,
                         "exception_scaffold": 1,
                     },
@@ -487,6 +471,7 @@ class TestGetQualityMetrics:
                         "control_blocks": 4,
                         "max_nesting_depth": 4,
                         "lines": 30,
+                        "sloc": 16,
                         "comparisons": 4,
                         "exception_scaffold": 2,
                     },
@@ -529,6 +514,7 @@ class TestGetQualityMetrics:
                 },
                 "ast_grep": {
                     "total_violations": 3,
+                    "violation_lines": 5,
                     "rules_checked": 33,
                     "counts": {"bare-except": 2, "len-comparison": 1},
                 },
@@ -548,6 +534,7 @@ class TestGetQualityMetrics:
                         "control_blocks": 3,
                         "max_nesting_depth": 3,
                         "lines": 25,
+                        "sloc": 25,
                         "comparisons": 2,
                         "exception_scaffold": 0,
                     },
@@ -572,7 +559,8 @@ class TestGetQualityMetrics:
     def test_lines_namespace(self, sample_quality_file: Path):
         result = get_quality_metrics(sample_quality_file)
 
-        assert result["loc"] == 120  # 80 + 40
+        assert result["sloc"] == 120  # 80 + 40
+        assert result["loc"] == 150  # full LOC
         assert result["total_lines"] == 150  # 100 + 50
         assert result["single_comments"] == 7  # 5 + 2
 
@@ -613,31 +601,28 @@ class TestGetQualityMetrics:
         assert abs(result["lines_per_symbol"] - 70 / 3) < 0.01
         # mean function LOC from distributions (max_func_loc removed)
         assert abs(result["mean_func_loc"] - 70 / 3) < 0.01
-        # comparisons: total = 1 + 4 + 2 = 7 (max_comparisons removed)
-        assert result["comparisons"] == 7
-        # exception_scaffold: total = 1 + 2 + 0 = 3
-        assert result["try_scaffold"] == 3
-        # Removed: expressions_top_level, expressions, control_blocks,
-        # method_counts, attribute_counts, max_func_loc, max_comparisons
+        assert result["mass.cc"] == pytest.approx(115.0)
+        assert "comparisons" not in result
+        assert "try_scaffold" not in result
 
     def test_waste_namespace(self, sample_quality_file: Path):
         result = get_quality_metrics(sample_quality_file)
 
         assert result["single_use_functions"] == 1
         assert result["trivial_wrappers"] == 0
-        assert result["single_method_classes"] == 0
+        assert "single_method_classes" not in result
 
     def test_redundancy_namespace(self, sample_quality_file: Path):
         result = get_quality_metrics(sample_quality_file)
 
-        assert result["clone_instances"] == 2
         assert result["clone_lines"] == 10
-        # clone_ratio_mean removed - derived metric not used
+        assert "clone_instances" not in result
 
     def test_ast_grep_namespace(self, sample_quality_file: Path):
         result = get_quality_metrics(sample_quality_file)
 
         assert result["ast_grep_violations"] == 3
+        assert result["sg_slop_violations"] == 0
 
     def test_globals_namespace(self, sample_quality_file: Path):
         result = get_quality_metrics(sample_quality_file)
@@ -651,10 +636,50 @@ class TestGetQualityMetrics:
         # methods_per_class, attributes_per_class removed - not used
         assert "methods_per_class" not in result
         assert "attributes_per_class" not in result
+        assert result["lint_per_loc"] == pytest.approx(3 / 150)
+        assert result["violation_pct"] == pytest.approx(5 / 150)
+        assert "ast_grep_per_loc" not in result
+
+    def test_exposes_cloned_and_union_pct_for_later_analysis(
+        self, sample_quality_file: Path
+    ):
+        overall_path = (
+            sample_quality_file / QUALITY_DIR / QUALITY_METRIC_SAVENAME
+        )
+        overall = json.loads(overall_path.read_text())
+        overall["redundancy"]["cloned_sloc_lines"] = 9
+        overall["verbosity_flagged_sloc_lines"] = 14
+        overall_path.write_text(json.dumps(overall))
+
+        result = get_quality_metrics(sample_quality_file)
+
+        assert result["cloned_sloc_lines"] == 9
+        assert result["cloned_pct"] == pytest.approx(9 / 150)
+        assert result["verbosity_flagged_sloc_lines"] == 14
+        assert result["verbosity_flagged_pct"] == pytest.approx(14 / 150)
 
     def test_missing_file(self, tmp_path: Path):
         result = get_quality_metrics(tmp_path)
         assert result == {}
+
+    def test_removed_fields_are_absent(self, sample_quality_file: Path):
+        result = get_quality_metrics(sample_quality_file)
+
+        removed_fields = {
+            "ast_grep_violation_lines",
+            "branches_mean",
+            "clone_instances",
+            "comparisons_mean",
+            "control_mean",
+            "single_method_classes",
+            "single_use_variables",
+            "source_file_count",
+            "try_scaffold",
+            "type_check_errors",
+            "type_check_warnings",
+        }
+
+        assert removed_fields.isdisjoint(result)
 
     def test_empty_files(self, tmp_path: Path):
         # Create empty but valid snapshot structure
@@ -663,6 +688,7 @@ class TestGetQualityMetrics:
 
         result = get_quality_metrics(tmp_path)
 
+        assert result["sloc"] == 0
         assert result["loc"] == 0
         # When there are no files, complexity stats might not be computed
         # Just verify basic fields exist
@@ -738,9 +764,11 @@ class TestGetCheckpointMetrics:
         result = get_checkpoint_metrics(tmp_path)
 
         # Verify it contains metrics from all sources
-        assert "pass_rate" in result  # from evaluation
+        assert "strict_pass_rate" in result  # from evaluation
         assert "cost" in result  # from inference
         assert "total_tests" in result  # from evaluation
+        assert "duration" in result
+        assert "pass_rate" not in result
 
     def test_empty_checkpoint(self, tmp_path: Path):
         """Test that get_checkpoint_metrics works with missing files."""
@@ -766,65 +794,65 @@ class TestComputeCheckpointDelta:
         """Test percentage change calculation."""
         prev = {
             "loc": 100,
-            "lint_errors": 5,
+            "ast_grep_violations": 5,
             "total_lines": 120,
         }
         curr = {
             "loc": 150,
-            "lint_errors": 10,
+            "ast_grep_violations": 10,
             "lines_added": 20,
             "lines_removed": 10,
         }
         result = compute_checkpoint_delta(prev, curr)
 
         assert result["delta.loc"] == 50.0  # (150-100)/100 * 100
-        assert result["delta.lint_errors"] == 100.0
+        assert result["delta.ast_grep_violations"] == 100.0
 
     def test_zero_prev_returns_inf(self):
         """Test handling of zero previous values."""
         prev = {
-            "lint_errors": 0,
+            "ast_grep_violations": 0,
             "total_lines": 100,
         }
         curr = {
-            "lint_errors": 5,
+            "ast_grep_violations": 5,
             "lines_added": 10,
             "lines_removed": 5,
         }
         result = compute_checkpoint_delta(prev, curr)
 
         # Should be inf when prev is 0 but curr > 0
-        assert result["delta.lint_errors"] == float("inf")
+        assert result["delta.ast_grep_violations"] == float("inf")
 
     def test_zero_both_returns_zero(self):
         """Test handling when both prev and curr are zero."""
         prev = {
-            "lint_errors": 0,
+            "ast_grep_violations": 0,
             "total_lines": 100,
         }
         curr = {
-            "lint_errors": 0,
+            "ast_grep_violations": 0,
             "lines_added": 0,
             "lines_removed": 0,
         }
         result = compute_checkpoint_delta(prev, curr)
 
-        assert result["delta.lint_errors"] == 0.0
+        assert result["delta.ast_grep_violations"] == 0.0
 
     def test_negative_delta(self):
         """Test negative percentage changes."""
         prev = {
-            "lint_errors": 10,
+            "ast_grep_violations": 10,
             "total_lines": 100,
         }
         curr = {
-            "lint_errors": 5,
+            "ast_grep_violations": 5,
             "lines_added": 10,
             "lines_removed": 5,
         }
         result = compute_checkpoint_delta(prev, curr)
 
-        assert result["delta.lint_errors"] == -50.0
+        assert result["delta.ast_grep_violations"] == -50.0
 
     def test_churn_ratio(self):
         """Test churn ratio calculation."""
@@ -842,88 +870,32 @@ class TestComputeCheckpointDelta:
 
         assert result["delta.churn_ratio"] == float("inf")
 
-    def test_new_violations_per_loc(self):
-        """Test new violations per LOC calculation."""
-        prev = {
-            "rubric_total_flags": 5,
-            "total_lines": 100,
-        }
-        curr = {
-            "rubric_total_flags": 8,
-            "rubric_carried_over": 5,
-            "loc": 100,
-            "lines_added": 10,
-            "lines_removed": 5,
-        }
-        result = compute_checkpoint_delta(prev, curr)
-
-        # new_flags = 8 - 5 = 3, per_loc = 3 / 100 = 0.03
-        assert result["delta.new_violations_per_loc"] == 0.03
-
-    def test_new_violations_per_loc_small_loc(self):
-        """Test new violations per LOC with small LOC value."""
-        prev = {
-            "total_lines": 50,
-        }
-        curr = {
-            "rubric_total_flags": 5,
-            "rubric_carried_over": 2,
-            "loc": 10,
-            "lines_added": 5,
-            "lines_removed": 3,
-        }
-        result = compute_checkpoint_delta(prev, curr)
-
-        # new_flags = 5 - 2 = 3, per_loc = 3 / 10 = 0.3
-        assert result["delta.new_violations_per_loc"] == 0.3
-
-    def test_high_complexity_total(self):
-        """Test high complexity total calculation."""
-        prev = {
-            "cc_high_count": 2,
-            "total_lines": 100,
-        }
-        curr = {
-            "cc_high_count": 4,
-            "lines_added": 20,
-            "lines_removed": 10,
-        }
-        result = compute_checkpoint_delta(prev, curr)
-
-        assert result["delta.cc_high_count"] == 100.0
-
     def test_all_delta_keys_present(self):
         """Test that all expected delta keys are present in output."""
         prev = {
             "loc": 100,
-            "lint_errors": 5,
             "ast_grep_violations": 10,
-            "functions": 5,
             "total_lines": 120,
         }
         curr = {
             "loc": 150,
-            "lint_errors": 8,
             "ast_grep_violations": 12,
-            "functions": 7,
             "lines_added": 20,
             "lines_removed": 10,
-            "rubric_total_flags": 5,
-            "rubric_carried_over": 2,
         }
         result = compute_checkpoint_delta(prev, curr)
 
-        # Check DELTA_METRIC_KEYS deltas are present (reduced set)
         assert "delta.loc" in result
-        assert "delta.lint_errors" in result
         assert "delta.ast_grep_violations" in result
-        assert "delta.cc_high_count" in result
-        assert "delta.comparisons" in result
-
-        # Check special delta metrics
         assert "delta.churn_ratio" in result
-        assert "delta.new_violations_per_loc" in result
 
-        # Verify removed deltas are not present
-        assert "delta.functions" not in result
-        assert "delta.clone_instances" not in result
+        removed_delta_keys = {
+            "delta.cc_high_count",
+            "delta.clone_instances",
+            "delta.comparisons",
+            "delta.functions",
+            "delta.lint_errors",
+            "delta.new_violations_per_loc",
+        }
+
+        assert removed_delta_keys.isdisjoint(result)

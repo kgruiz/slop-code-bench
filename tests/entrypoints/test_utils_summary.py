@@ -2,36 +2,31 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from rich.console import Console
 
 from slop_code.common import SUMMARY_FILENAME
 from slop_code.entrypoints.utils import display_and_save_summary
 
 
-def test_display_and_save_summary_uses_complexity_mass_gini_for_erosion(
-    tmp_path,
-):
+def test_display_and_save_summary_uses_new_composite_formulas(tmp_path):
     results_file = tmp_path / "checkpoint_results.jsonl"
     rows = [
         {
             "problem": "prob1",
             "idx": 1,
-            "pass_rate": 1.0,
-            "checkpoint_pass_rate": 1.0,
-            "functions": 5,
-            "methods": 0,
-            "loc": 100,
-            "mass.complexity_concentration": 0.6,
+            "strict_pass_rate": 1.0,
+            "isolated_pass_rate": 1.0,
+            "verbosity": 0.6,
+            "erosion": 0.6,
         },
         {
             "problem": "prob1",
             "idx": 2,
-            "pass_rate": 1.0,
-            "checkpoint_pass_rate": 1.0,
-            "functions": 5,
-            "methods": 0,
-            "loc": 100,
-            "mass.complexity_concentration": 0.4,
+            "strict_pass_rate": 1.0,
+            "isolated_pass_rate": 1.0,
+            "verbosity": 0.3,
+            "erosion": 0.4,
         },
     ]
     results_file.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
@@ -48,9 +43,17 @@ def test_display_and_save_summary_uses_complexity_mass_gini_for_erosion(
 
     assert summary is not None
     expected_first = 0.6
-    expected_second = 0.4
-    assert summary.erosion.mean == (expected_first + expected_second) / 2
+    expected_second = 0.3
+    assert summary.verbosity.mean == pytest.approx(
+        (expected_first + expected_second) / 2
+    )
+    assert summary.erosion.mean == pytest.approx(0.5)
     assert summary.erosion.count == 2
 
     saved = json.loads((tmp_path / SUMMARY_FILENAME).read_text())
+    assert saved["verbosity"]["mean"] == summary.verbosity.mean
     assert saved["erosion"]["mean"] == summary.erosion.mean
+
+    rendered = console.export_text()
+    assert "Mean verbosity score" in rendered
+    assert "Mean erosion score" in rendered

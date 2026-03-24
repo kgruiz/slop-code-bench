@@ -87,13 +87,7 @@ One JSON object per line, one line per checkpoint across all problems.
   "clone_instances": 0,
   "clone_lines": 0,
   "ast_grep_violations": 35,
-  "sg_verbosity_violations": 5,
-  "sg_naming_violations": 3,
-  "sg_performance_violations": 0,
-  "sg_types_violations": 2,
-  "sg_safety_violations": 4,
-  "sg_style_violations": 9,
-  "sg_complexity_violations": 12,
+  "sg_slop_violations": 35,
   "ast_grep_per_loc": 0.08139534883720931,
   "lint_per_loc": 0.1883720930232558
 }
@@ -144,7 +138,7 @@ One JSON object per line, one line per checkpoint across all problems.
 - `cc_extreme_count`: Functions with CC > 30
 - `clone_instances`: Duplicate code blocks
 - `ast_grep_violations`: Total pattern violations
-- `sg_*_violations`: Violations by category (verbosity, naming, etc.)
+- `sg_slop_violations`: Slop-rule violation count
 - `ast_grep_per_loc`: Violations per line of code
 - `lint_per_loc`: Lint errors per line of code
 
@@ -337,15 +331,11 @@ Aggregated across all problems:
 
 ### Composite Scores
 
-**Verbosity Score**: Measures code bloat and over-abstraction
+**Verbosity Score**: Measures code bloat and over-abstraction.
 
 **Formula:**
 ```
-verbosity_per_checkpoint = (
-  (ast_grep_violations + rubric_flags) / loc +
-  trivial_wrappers / (functions + methods) +
-  single_use_functions / (functions + methods)
-) / 3
+verbosity_per_checkpoint = verbosity_flagged_pct
 ```
 
 Mean across all checkpoints = verbosity score
@@ -354,7 +344,7 @@ Mean across all checkpoints = verbosity score
 
 **Formula:**
 ```
-erosion_per_checkpoint = mass.complexity_concentration
+erosion_per_checkpoint = mass.high_cc_pct
 ```
 
 Mean across all checkpoints = erosion score

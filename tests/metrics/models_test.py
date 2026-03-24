@@ -13,6 +13,7 @@ from slop_code.metrics.languages import get_language
 from slop_code.metrics.languages import get_language_by_extension
 from slop_code.metrics.languages import register_language
 from slop_code.metrics.models import AstGrepAggregates
+from slop_code.metrics.models import AstGrepViolation
 from slop_code.metrics.models import ClassStats
 from slop_code.metrics.models import ComplexityAggregates
 from slop_code.metrics.models import FileMetrics
@@ -54,8 +55,6 @@ def _create_snapshot_from_files(
     mi_ratings: dict[str, int] = {"A": 0, "B": 0, "C": 0}
 
     file_count = len(files)
-    source_file_count = len(source_files) if source_files else file_count
-
     total_symbols = 0
     function_count = 0
     method_count = 0
@@ -125,7 +124,6 @@ def _create_snapshot_from_files(
 
     return SnapshotMetrics(
         file_count=file_count,
-        source_file_count=source_file_count,
         lines=lines,
         lint=lint,
         symbols=SymbolAggregates(
@@ -156,15 +154,14 @@ def _create_snapshot_from_files(
         waste=WasteAggregates(
             single_use_functions=0,
             trivial_wrappers=0,
-            single_method_classes=0,
         ),
         redundancy=RedundancyAggregates(
-            clone_instances=0,
             clone_lines=0,
             clone_ratio_sum=0.0,
             files_with_clones=0,
         ),
         ast_grep=AstGrepAggregates(violations=0, rules_checked=0),
+        source_files=source_files,
     )
 
 
@@ -241,7 +238,7 @@ class TestSnapshotQualityReport:
         report = SnapshotQualityReport.from_snapshot_metrics(snapshot)
 
         assert report.files == 2
-        assert report.source_files == 2
+        assert "source_files" not in report.model_dump()
         # Lines/lint come from first file in helper
         assert report.overall_lines.total_lines == 50
         assert report.overall_lines.loc == 40
@@ -438,7 +435,7 @@ class TestSnapshotQualityReport:
         report = SnapshotQualityReport.from_snapshot_metrics(snapshot)
 
         assert report.files == 0
-        assert report.source_files == 0
+        assert "source_files" not in report.model_dump()
         assert report.overall_lines.total_lines == 0
         assert report.lint_errors == 0
         assert report.lint_fixable == 0
@@ -454,6 +451,54 @@ class TestSnapshotQualityReport:
         assert report.mi == {"A": 0, "B": 0, "C": 0}
         assert report.ast_grep_violations == 0
         assert report.ast_grep_rules_checked == 0
+
+
+def test_ast_grep_aggregates_count_unique_flagged_lines_per_file():
+    aggregates = AstGrepAggregates(violations=0, rules_checked=0)
+    file_metrics = FileMetrics(
+        symbols=[],
+        lines=LineCountMetrics(
+            total_lines=20,
+            loc=15,
+            comments=2,
+            multi_comment=1,
+            single_comment=1,
+        ),
+        lint=LintMetrics(errors=0, fixable=0, counts={}),
+        mi=20.0,
+        depth=1,
+        ast_grep_violations=[
+            AstGrepViolation(
+                rule_id="rule-a",
+                severity="warning",
+                line=10,
+                column=0,
+                end_line=12,
+                end_column=0,
+            ),
+            AstGrepViolation(
+                rule_id="rule-b",
+                severity="warning",
+                line=12,
+                column=0,
+                end_line=13,
+                end_column=0,
+            ),
+            AstGrepViolation(
+                rule_id="rule-c",
+                severity="warning",
+                line=10,
+                column=0,
+                end_line=10,
+                end_column=0,
+            ),
+        ],
+    )
+
+    aggregates.update(file_metrics)
+
+    assert aggregates.violations == 3
+    assert aggregates.violation_lines == 4
 
     def test_from_snapshot_metrics_with_ast_grep(self):
         """Test AST-grep metrics from aggregates are included in report."""

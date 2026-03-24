@@ -148,26 +148,14 @@ Pattern-based detection of code quality issues across 7 categories.
 
 | Category | Description | Example Rules |
 |----------|-------------|---------------|
-| **verbosity** | Overly verbose or redundant code | Excessive comments, redundant expressions |
-| **naming** | Identifier quality issues | Type suffixes in names (`users_list`), generic names (`data`) |
-| **safety** | Security and safety concerns | Bare except clauses, dangerous patterns |
-| **complexity** | Structural complexity | Deep nesting, high cognitive load |
-| **style** | Code style violations | Inconsistent patterns |
-| **types** | Type annotation issues | Missing or incorrect type hints |
-| **performance** | Performance anti-patterns | Inefficient operations |
+| **slop** | Unnecessary code surface | Verbose loops, redundant guards, needless materialization, broad `Any`/`object` typing |
 
 ### Metrics
 
 | Metric | Description |
 |--------|-------------|
 | `ast_grep_violations` | Total violations found |
-| `sg_verbosity_violations` | Verbosity category count |
-| `sg_naming_violations` | Naming category count |
-| `sg_safety_violations` | Safety category count |
-| `sg_complexity_violations` | Complexity category count |
-| `sg_style_violations` | Style category count |
-| `sg_types_violations` | Types category count |
-| `sg_performance_violations` | Performance category count |
+| `sg_slop_violations` | Slop-rule violation count |
 | `ast_grep_per_loc` | Violations per line of code |
 
 ### Rule Weights
@@ -226,22 +214,19 @@ Measures code bloat and over-abstraction.
 
 **Formula:**
 ```python
-verbosity = mean(
-    (ast_grep_violations + rubric_total_flags) / loc
-    + trivial_wrappers / (functions + methods)
-    + single_use_functions / (functions + methods)
-)
+verbosity = mean(verbosity_flagged_pct)
 ```
 
-Lower is better. High values indicate excessive abstraction or verbose patterns.
+Lower is better. High values indicate that a large share of SLOC is covered by
+duplicate code or AST-grep verbosity flags, with overlapping lines counted once.
 
 ### Erosion Score
 
-Measures structural degradation (complexity mass concentration).
+Measures structural degradation (high-complexity mass concentration).
 
 **Formula:**
 ```python
-erosion = mean(mass.complexity_concentration)
+erosion = mean(mass.high_cc_pct)
 ```
 
 Lower is better. High values indicate structural decay and accumulating technical debt.

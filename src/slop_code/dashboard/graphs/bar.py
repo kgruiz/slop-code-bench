@@ -311,7 +311,7 @@ def build_quality_bars(context: ChartContext) -> go.Figure:
     fig = make_subplots(
         rows=1,
         cols=3,
-        subplot_titles=["Mean Func LOC", "Comparisons/LOC", "Try/LOC"],
+        subplot_titles=["Mean Func LOC", "Mass CC", "CC Concentration"],
         horizontal_spacing=0.05,
     )
 
@@ -332,32 +332,8 @@ def build_quality_bars(context: ChartContext) -> go.Figure:
 
         # Compute normalized metrics on the fly
         mean_func_loc, std_func_loc = get_stats("mean_func_loc")
-
-        # Compute comparisons per LOC
-        if (
-            "comparisons" in checkpoint_run.columns
-            and "loc" in checkpoint_run.columns
-        ):
-            checkpoint_run = checkpoint_run.copy()
-            checkpoint_run["_cmp_per_loc"] = checkpoint_run[
-                "comparisons"
-            ] / checkpoint_run["loc"].replace(0, 1)
-            mean_cmp_loc, std_cmp_loc = get_stats("_cmp_per_loc")
-        else:
-            mean_cmp_loc, std_cmp_loc = 0, 0
-
-        # Compute try/except per LOC
-        if (
-            "try_scaffold" in checkpoint_run.columns
-            and "loc" in checkpoint_run.columns
-        ):
-            checkpoint_run = checkpoint_run.copy()
-            checkpoint_run["_try_per_loc"] = checkpoint_run[
-                "try_scaffold"
-            ] / checkpoint_run["loc"].replace(0, 1)
-            mean_try_loc, std_try_loc = get_stats("_try_per_loc")
-        else:
-            mean_try_loc, std_try_loc = 0, 0
+        mean_mass_cc, std_mass_cc = get_stats("mass.cc")
+        mean_cc_conc, std_cc_conc = get_stats("cc_concentration")
 
         def add_bar(
             y_val, std_val, r, c, show_legend=False, format_str="{:.1f}"
@@ -389,11 +365,11 @@ def build_quality_bars(context: ChartContext) -> go.Figure:
             )
 
         add_bar(mean_func_loc, std_func_loc, 1, 1, show_legend=True)
-        add_bar(mean_cmp_loc, std_cmp_loc, 1, 2, format_str="{:.3f}")
-        add_bar(mean_try_loc, std_try_loc, 1, 3, format_str="{:.3f}")
+        add_bar(mean_mass_cc, std_mass_cc, 1, 2, format_str="{:.1f}")
+        add_bar(mean_cc_conc, std_cc_conc, 1, 3, format_str="{:.3f}")
 
     fig.update_yaxes(title_text="LOC", row=1, col=1, gridcolor="lightgray")
-    fig.update_yaxes(title_text="Ratio", row=1, col=2, gridcolor="lightgray")
+    fig.update_yaxes(title_text="Mass", row=1, col=2, gridcolor="lightgray")
     fig.update_yaxes(title_text="Ratio", row=1, col=3, gridcolor="lightgray")
 
     for i in range(1, 4):

@@ -13,12 +13,16 @@ You are an exceptional python software engineer and you to need to implement a s
   - Group functions into files based on related functionality
   - Keep your code clean
 - No god functions/classes.
-- Make sure the code is documented properly so that it is easy to pick up. 
-- Avoid AI generated slop:
+- Make sure the code is documented appropriately so that it is easy to pick up. 
+- Minimize the following gotchas:
   - Extra defensive checks or try/catch blocks that are abnormal.
   - Casts to get around type checking
   - Variables that are only used a single time after declaration.
   - Extra comments that a human wouldn't add.
+  - Trivial wrappers
+  - Heavy nesting
+  - If/Else ladders
+  - A ton of helper methods
 
 Your task is:
 {{ spec.strip() }}

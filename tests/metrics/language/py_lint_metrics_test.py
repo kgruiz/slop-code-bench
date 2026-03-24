@@ -232,6 +232,24 @@ class TestErrorCodes:
 class TestLintMetricsEdgeCases:
     """Edge case tests for lint metrics."""
 
+    def test_empty_stdout(self, tmp_path, monkeypatch):
+        """Test with empty stdout — ruff returns nothing for clean files."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("pass")
+
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_result.returncode = 0
+
+        mock_run = MagicMock(return_value=mock_result)
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        metrics = calculate_lint_metrics(test_file)
+
+        assert metrics.errors == 0
+        assert metrics.fixable == 0
+        assert metrics.counts == {}
+
     def test_empty_array_output(self, tmp_path, monkeypatch):
         """Test with empty array output."""
         test_file = tmp_path / "test.py"

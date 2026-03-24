@@ -33,15 +33,14 @@ IDENTITY_COLS = KEY_COLS + [
     "is_last",
     "started",
     "ended",
-    "elapsed",
     "version",
     "path",
 ]
 
 TEST_COLS = KEY_COLS + [
-    "pass_rate",
+    "strict_pass_rate",
     "core_pass_rate",
-    "checkpoint_pass_rate",
+    "isolated_pass_rate",
     "duration",
     "total_tests",
     "passed_tests",
@@ -67,6 +66,7 @@ INFERENCE_COLS = KEY_COLS + [
 
 CODE_STATS_COLS = KEY_COLS + [
     "loc",
+    "sloc",
     "total_lines",
     "single_comments",
     "files",
@@ -75,16 +75,11 @@ CODE_STATS_COLS = KEY_COLS + [
     "classes",
     "statements",
     "symbols_total",
-    "source_file_count",
 ]
 
 # Complexity cols use prefix matching
 COMPLEXITY_PREFIXES = [
     "cc_",
-    "nesting_",
-    "branches_",
-    "comparisons_",
-    "control_",
     "lint_",
     "ast_grep_",
     "sg_",
@@ -93,22 +88,7 @@ COMPLEXITY_PREFIXES = [
 # Mass cols (important complexity metrics - warn if missing)
 MASS_PREFIX = "mass."
 EXPECTED_MASS_COLS = [
-    "mass.complexity",
-    "mass.complexity_concentration",
-    "mass.branches",
-    "mass.comparisons",
-    "mass.vars_used",
-    "mass.vars_defined",
-    "mass.try_scaffold",
-    "mass.try_scaffold_concentration",
-    "mass.top50_count",
-    "mass.top50_mass",
-    "mass.top75_count",
-    "mass.top75_mass",
-    "mass.top90_count",
-    "mass.top90_mass",
-    "mass.high_cc",
-    "mass.high_cc_pct",
+    "mass.cc",
 ]
 
 # Delta cols use prefix matching
