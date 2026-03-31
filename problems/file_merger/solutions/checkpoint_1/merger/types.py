@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-
 import datetime as _dt
 import re
 from dataclasses import dataclass
@@ -96,9 +95,13 @@ def parse_timestamp(text: str) -> _dt.datetime | None:
 
 def format_decimal(value: Decimal) -> str:
     normalized = value.normalize()
-    as_str = format(normalized, "f")
-    if "." in as_str:
-        as_str = as_str.rstrip("0").rstrip(".")
+    adjusted = normalized.adjusted()
+    if adjusted >= 15 or adjusted <= -7:
+        as_str = format(normalized, "g")
+    else:
+        as_str = format(normalized, "f")
+        if "." in as_str:
+            as_str = as_str.rstrip("0").rstrip(".")
     if as_str in {"", "-"}:
         return "0"
     return as_str
@@ -114,5 +117,7 @@ def format_timestamp(value: _dt.datetime) -> str:
     return base + "Z"
 
 
-def format_bool(value: bool) -> str:
+def format_bool(value: object) -> str:
+    if not isinstance(value, bool):
+        raise TypeError("bool value required")
     return "true" if value else "false"

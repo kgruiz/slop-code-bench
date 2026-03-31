@@ -1,10 +1,11 @@
 case:
   arguments: --output output.csv --key id --schema schema.json data.csv
   input_files:
-    - content: 'id,value
-1,1e100
-2,1e-100
-3,1.23456789012345'
+    - content: |-
+        id,value
+        1,1e100
+        2,1e-100
+        3,1.23456789012345
       file_type: text
       path: data.csv
     - content:
@@ -21,8 +22,8 @@ expected:
   files:
     output.csv:
       - id: 1
-        value: 1e+100
+        value: !!float 1e+100
       - id: 2
-        value: 1e-100
+        value: !!float 1e-100
       - id: 3
         value: 1.23456789012345

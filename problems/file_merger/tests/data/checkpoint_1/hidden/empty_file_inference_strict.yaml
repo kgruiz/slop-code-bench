@@ -4,9 +4,10 @@ case:
     - content: "id,score\n"
       file_type: text
       path: empty.csv
-    - content: 'id,score
-1,100
-2,200'
+    - content: |-
+        id,score
+        1,100
+        2,200
       file_type: text
       path: data.csv
 

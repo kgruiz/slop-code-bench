@@ -10,8 +10,7 @@ import math
 import os
 import sys
 from collections import defaultdict
-from heapq import heappop
-from heapq import heappush
+from heapq import heappop, heappush
 from typing import NamedTuple
 
 # Constants
@@ -553,7 +552,7 @@ def main():
 
     # Summary
     print("SUMMARY:")
-    print(f"  End Cooldown: {format_time(end_cooldown, use_ceil=False)}")
+    print(f"  End Cooldown: {format_time(end_cooldown, use_ceil=True)}")
     print(f"  End Fatigue: {format_time(end_fatigue, use_ceil=True)}")
     print(f"  Isotopes Used: {format_isotopes(total_isotopes)}")
     print(f"  Time Waiting: {format_time(total_wait)}")

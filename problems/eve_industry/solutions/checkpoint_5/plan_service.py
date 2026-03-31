@@ -54,6 +54,39 @@ class BuildNode:
     children: list["BuildNode"]
 
 
+_T1_CAPITAL_SHIP_GROUPS = {
+    "Carrier",
+    "Dreadnought",
+    "Force Auxiliary",
+    "Freighter",
+    "Capital Industrial Ship",
+    "Titan",
+}
+
+
+def _is_t1_capital_ship(
+    sde: SDELoader,
+    type_id: int,
+    types_df,
+    groups_df,
+) -> bool:
+    item_row = types_df[types_df["typeID"] == type_id]
+    if len(item_row) == 0:
+        return False
+
+    group_id = int(item_row.iloc[0]["groupID"])
+    group_row = groups_df[groups_df["groupID"] == group_id]
+    if len(group_row) == 0 or int(group_row.iloc[0]["categoryID"]) != 6:
+        return False
+
+    tech_level = determine_tech_level(sde, type_id)
+    if tech_level != "Tech I":
+        return False
+
+    group_name = str(group_row.iloc[0]["groupName"])
+    return group_name in _T1_CAPITAL_SHIP_GROUPS
+
+
 def split_job(
     total_runs: int,
     base_time_seconds: int,
@@ -357,6 +390,7 @@ def aggregate_all_requirements(
 
     # Queue of items to process
     to_process: list[int] = list(initial_requirements.keys())
+    activities = sde.load_activities()
 
     while to_process:
         type_id = to_process.pop(0)
@@ -370,23 +404,21 @@ def aggregate_all_requirements(
             continue
         blueprint_type_id, activity_id = result
 
-        # Determine ME based on activity type and item category
-        # Ships (categoryID=6) use ME=0, components use component_bpo_defaults
+        # Only Tech I capital ships as components use ME=0.
         if activity_id == 1:  # Manufacturing
             types_df = sde.load_types()
             groups_df = sde.load_groups()
-            item_row = types_df[types_df["typeID"] == type_id]
-            if len(item_row) > 0:
-                group_id = int(item_row.iloc[0]["groupID"])
-                group_row = groups_df[groups_df["groupID"] == group_id]
-                if len(group_row) > 0 and int(group_row.iloc[0]["categoryID"]) == 6:
-                    me = 0  # Ships use ME=0
-                else:
-                    me = config.component_bpo_defaults.me
+            if _is_t1_capital_ship(sde, type_id, types_df, groups_df):
+                me = 0
             else:
                 me = config.component_bpo_defaults.me
         else:  # Reactions
             me = 0
+
+        if activity_id == 1:
+            te = 0 if me == 0 else config.component_bpo_defaults.te
+        else:
+            te = 0
 
         # Get output per run
         output_per_run = sde.get_output_quantity(blueprint_type_id, activity_id)
@@ -396,6 +428,15 @@ def aggregate_all_requirements(
         if type_id in last_runs and last_runs[type_id] == runs_needed:
             continue
         last_runs[type_id] = runs_needed
+
+        activity_row = activities[
+            (activities["typeID"] == blueprint_type_id)
+            & (activities["activityID"] == activity_id)
+        ]
+        base_time_seconds = int(activity_row.iloc[0]["time"])
+        split_jobs = split_job(
+            runs_needed, base_time_seconds, te, config.te_bonus, config.split_days
+        )
 
         materials_df = sde.load_activity_materials()
         material_rows = materials_df[
@@ -413,7 +454,9 @@ def aggregate_all_requirements(
             # Calculate quantity needed
             if activity_id == 1:  # Manufacturing
                 per_run = max(1, round(base_quantity * (1 - me / 100), 2))
-                mat_quantity_needed = math.ceil(per_run * runs_needed)
+                mat_quantity_needed = sum(
+                    math.ceil(per_run * job_runs) for job_runs, _ in split_jobs
+                )
             else:  # Reactions
                 mat_quantity_needed = base_quantity * runs_needed
 
@@ -449,19 +492,11 @@ def aggregate_all_requirements(
             continue
         blueprint_type_id, activity_id = result
 
-        # Determine ME/TE based on activity type and item category
-        # Ships (categoryID=6) use ME=0/TE=0, components use component_bpo_defaults
+        # Only Tech I capital ships as components use ME=0/TE=0.
         if activity_id == 1:  # Manufacturing
-            item_row = types_df[types_df["typeID"] == type_id]
-            if len(item_row) > 0:
-                group_id = int(item_row.iloc[0]["groupID"])
-                group_row = groups_df[groups_df["groupID"] == group_id]
-                if len(group_row) > 0 and int(group_row.iloc[0]["categoryID"]) == 6:
-                    me = 0  # Ships use ME=0
-                    te = 0  # Ships use TE=0
-                else:
-                    me = config.component_bpo_defaults.me
-                    te = config.component_bpo_defaults.te
+            if _is_t1_capital_ship(sde, type_id, types_df, groups_df):
+                me = 0
+                te = 0
             else:
                 me = config.component_bpo_defaults.me
                 te = config.component_bpo_defaults.te

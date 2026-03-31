@@ -30,6 +30,7 @@ case:
 expected:
   status_code: 0
   files:
-    out.csv: 'id,metadata
-1,"{""created"":""2024-01-01T10:00:00.123456Z"",""updated"":""2024-01-01T11:00:00.654321Z""}"
-2,"{""created"":""2024-01-01T12:00:00.000001Z"",""updated"":null}"'
+    out.csv: |-
+      id,metadata
+      1,"{""created"":""2024-01-01T10:00:00.123456Z"",""updated"":""2024-01-01T11:00:00.654321Z""}"
+      2,"{""created"":""2024-01-01T12:00:00.000001Z"",""updated"":null}"

@@ -8,9 +8,10 @@ case:
           amount: null
       file_type: jsonl
       path: a.jsonl
-    - content: 'id,amount
-3,2.5
-4,3.7'
+    - content: |-
+        id,amount
+        3,2.5
+        4,3.7
       file_type: text
       path: b.csv
 

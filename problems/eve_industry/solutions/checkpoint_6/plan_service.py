@@ -54,6 +54,39 @@ class BuildNode:
     children: list["BuildNode"]
 
 
+_T1_CAPITAL_SHIP_GROUPS = {
+    "Carrier",
+    "Dreadnought",
+    "Force Auxiliary",
+    "Freighter",
+    "Capital Industrial Ship",
+    "Titan",
+}
+
+
+def _is_t1_capital_ship(
+    sde: SDELoader,
+    type_id: int,
+    types_df,
+    groups_df,
+) -> bool:
+    item_row = types_df[types_df["typeID"] == type_id]
+    if len(item_row) == 0:
+        return False
+
+    group_id = int(item_row.iloc[0]["groupID"])
+    group_row = groups_df[groups_df["groupID"] == group_id]
+    if len(group_row) == 0 or int(group_row.iloc[0]["categoryID"]) != 6:
+        return False
+
+    tech_level = determine_tech_level(sde, type_id)
+    if tech_level != "Tech I":
+        return False
+
+    group_name = str(group_row.iloc[0]["groupName"])
+    return group_name in _T1_CAPITAL_SHIP_GROUPS
+
+
 def parse_stock_file(file_path: str) -> dict[str, int]:
     """
     Parse a stock/target file into a dictionary.
@@ -246,79 +279,35 @@ def _process_inventable_target(
     materials_dict: dict[str, dict],
     jobs: list[JobRow],
 ) -> None:
-    """Process a T2/T3 target that requires invention."""
-    types_df = sde.load_types()
-    item_row = types_df[types_df["typeID"] == type_id].iloc[0]
-    item_info = build_item_info(sde, item_row)
-
-    # Get invention data with config's invention_skill
-    if tech_level == "Tech II":
-        invention_data = get_t2_invention_data(sde, item_info, config.invention_skill)
-        # With "None" decryptor
-        prob_row = next(r for r in invention_data.probabilities if r.decryptor_name == "None")
-        bp_me = prob_row.me
-        bp_te = prob_row.te
-        runs_per_bpc = prob_row.runs
-        success_rate = prob_row.probability / 100
-    else:  # Tech III
-        invention_data = get_t3_invention_data(sde, item_info, config.invention_skill)
-        # For T3, use Intact relic with "None" decryptor
-        prob_row = None
-        for r in invention_data.probabilities:
-            if r.decryptor_name == "None" and r.relic_name and "Intact" in r.relic_name:
-                prob_row = r
-                break
-        if prob_row is None:
-            # Fall back to first None decryptor
-            prob_row = next(r for r in invention_data.probabilities if r.decryptor_name == "None")
-        bp_me = prob_row.me
-        bp_te = prob_row.te
-        runs_per_bpc = prob_row.runs
-        success_rate = prob_row.probability / 100
-
-    # Get blueprint info
+    """Process a T2/T3 target through the recursive build-all path."""
     result = sde.find_blueprint_for_product(type_id)
     if result is None:
         return
     blueprint_type_id, activity_id = result
 
-    # Calculate runs needed
     output_per_run = sde.get_output_quantity(blueprint_type_id, activity_id)
     runs_needed = math.ceil(needed / output_per_run)
-    produced = runs_needed * output_per_run
+    if tech_level == "Tech II":
+        build_spec = BuildSpec(
+            item_name=item_name,
+            runs_per_job=runs_needed,
+            count=1,
+            format_type="invention",
+            decryptor="None",
+        )
+    else:
+        build_spec = BuildSpec(
+            item_name=item_name,
+            runs_per_job=runs_needed,
+            count=1,
+            format_type="reverse_engineering",
+            decryptor="None",
+            relic="Intact",
+        )
 
-    # Calculate invention attempts
-    bpcs_needed = math.ceil(runs_needed / runs_per_bpc)
-    invention_attempts = math.ceil(bpcs_needed / success_rate)
-
-    # Add invention materials (datacores)
-    for datacore in invention_data.datacores:
-        qty = invention_attempts * invention_data.required_per_run
-        _add_material_with_inventory(sde, datacore, qty, inventory, materials_dict)
-
-    # Add manufacturing materials
-    _add_manufacturing_materials_with_inventory(
-        sde, blueprint_type_id, activity_id, bp_me, runs_needed,
-        inventory, materials_dict, config
+    _accumulate_build_plan_recursive_with_inventory(
+        sde, build_spec, config, inventory, materials_dict, jobs
     )
-
-    # Add manufacturing job
-    bp_name = sde.get_item_name_by_id(blueprint_type_id, fallback=f"{item_name} Blueprint")
-    activities = sde.load_activities()
-    activity_row = activities[
-        (activities["typeID"] == blueprint_type_id) &
-        (activities["activityID"] == activity_id)
-    ]
-    base_time = int(activity_row.iloc[0]["time"])
-
-    split_jobs_list = split_job(
-        runs_needed, base_time, bp_te, config.te_bonus, config.split_days
-    )
-    for runs, days in split_jobs_list:
-        jobs.append(JobRow(name=bp_name, runs=runs, days=days, count=1))
-
-    # Record production
-    inventory.produce(item_name, produced)
 
 
 def _process_buildable_target(
@@ -331,44 +320,34 @@ def _process_buildable_target(
     materials_dict: dict[str, dict],
     jobs: list[JobRow],
 ) -> None:
-    """Process a T1 buildable target."""
+    """Process a T1 buildable target through the recursive build-all path."""
     result = sde.find_blueprint_for_product(type_id)
     if result is None:
         return
     blueprint_type_id, activity_id = result
 
-    # Use component_bpo_defaults ME/TE
-    me = config.component_bpo_defaults.me
-    te = config.component_bpo_defaults.te
-
-    # Calculate runs
     output_per_run = sde.get_output_quantity(blueprint_type_id, activity_id)
     runs_needed = math.ceil(needed / output_per_run)
-    produced = runs_needed * output_per_run
+    me = 0
+    te = 0
+    if activity_id == 1:
+        types_df = sde.load_types()
+        groups_df = sde.load_groups()
+        if not _is_t1_capital_ship(sde, type_id, types_df, groups_df):
+            me = config.component_bpo_defaults.me
+            te = config.component_bpo_defaults.te
 
-    # Add materials
-    _add_manufacturing_materials_with_inventory(
-        sde, blueprint_type_id, activity_id, me, runs_needed,
-        inventory, materials_dict, config
+    build_spec = BuildSpec(
+        item_name=item_name,
+        runs_per_job=runs_needed,
+        count=1,
+        format_type="normal",
+        me=me,
+        te=te,
     )
-
-    # Add job
-    bp_name = sde.get_item_name_by_id(blueprint_type_id, fallback=f"{item_name} Blueprint")
-    activities = sde.load_activities()
-    activity_row = activities[
-        (activities["typeID"] == blueprint_type_id) &
-        (activities["activityID"] == activity_id)
-    ]
-    base_time = int(activity_row.iloc[0]["time"])
-
-    split_jobs_list = split_job(
-        runs_needed, base_time, te, config.te_bonus, config.split_days
+    _accumulate_build_plan_recursive_with_inventory(
+        sde, build_spec, config, inventory, materials_dict, jobs
     )
-    for runs, days in split_jobs_list:
-        jobs.append(JobRow(name=bp_name, runs=runs, days=days, count=1))
-
-    # Record production
-    inventory.produce(item_name, produced)
 
 
 def _add_material_with_inventory(
@@ -759,6 +738,7 @@ def aggregate_all_requirements(
 
     # Queue of items to process
     to_process: list[int] = list(initial_requirements.keys())
+    activities = sde.load_activities()
 
     while to_process:
         type_id = to_process.pop(0)
@@ -772,23 +752,21 @@ def aggregate_all_requirements(
             continue
         blueprint_type_id, activity_id = result
 
-        # Determine ME based on activity type and item category
-        # Ships (categoryID=6) use ME=0, components use component_bpo_defaults
+        # Only Tech I capital ships as components use ME=0.
         if activity_id == 1:  # Manufacturing
             types_df = sde.load_types()
             groups_df = sde.load_groups()
-            item_row = types_df[types_df["typeID"] == type_id]
-            if len(item_row) > 0:
-                group_id = int(item_row.iloc[0]["groupID"])
-                group_row = groups_df[groups_df["groupID"] == group_id]
-                if len(group_row) > 0 and int(group_row.iloc[0]["categoryID"]) == 6:
-                    me = 0  # Ships use ME=0
-                else:
-                    me = config.component_bpo_defaults.me
+            if _is_t1_capital_ship(sde, type_id, types_df, groups_df):
+                me = 0
             else:
                 me = config.component_bpo_defaults.me
         else:  # Reactions
             me = 0
+
+        if activity_id == 1:
+            te = 0 if me == 0 else config.component_bpo_defaults.te
+        else:
+            te = 0
 
         # Get output per run
         output_per_run = sde.get_output_quantity(blueprint_type_id, activity_id)
@@ -798,6 +776,15 @@ def aggregate_all_requirements(
         if type_id in last_runs and last_runs[type_id] == runs_needed:
             continue
         last_runs[type_id] = runs_needed
+
+        activity_row = activities[
+            (activities["typeID"] == blueprint_type_id)
+            & (activities["activityID"] == activity_id)
+        ]
+        base_time_seconds = int(activity_row.iloc[0]["time"])
+        split_jobs = split_job(
+            runs_needed, base_time_seconds, te, config.te_bonus, config.split_days
+        )
 
         materials_df = sde.load_activity_materials()
         material_rows = materials_df[
@@ -815,7 +802,9 @@ def aggregate_all_requirements(
             # Calculate quantity needed
             if activity_id == 1:  # Manufacturing
                 per_run = max(1, round(base_quantity * (1 - me / 100), 2))
-                mat_quantity_needed = math.ceil(per_run * runs_needed)
+                mat_quantity_needed = sum(
+                    math.ceil(per_run * job_runs) for job_runs, _ in split_jobs
+                )
             else:  # Reactions
                 mat_quantity_needed = base_quantity * runs_needed
 
@@ -851,19 +840,11 @@ def aggregate_all_requirements(
             continue
         blueprint_type_id, activity_id = result
 
-        # Determine ME/TE based on activity type and item category
-        # Ships (categoryID=6) use ME=0/TE=0, components use component_bpo_defaults
+        # Only Tech I capital ships as components use ME=0/TE=0.
         if activity_id == 1:  # Manufacturing
-            item_row = types_df[types_df["typeID"] == type_id]
-            if len(item_row) > 0:
-                group_id = int(item_row.iloc[0]["groupID"])
-                group_row = groups_df[groups_df["groupID"] == group_id]
-                if len(group_row) > 0 and int(group_row.iloc[0]["categoryID"]) == 6:
-                    me = 0  # Ships use ME=0
-                    te = 0  # Ships use TE=0
-                else:
-                    me = config.component_bpo_defaults.me
-                    te = config.component_bpo_defaults.te
+            if _is_t1_capital_ship(sde, type_id, types_df, groups_df):
+                me = 0
+                te = 0
             else:
                 me = config.component_bpo_defaults.me
                 te = config.component_bpo_defaults.te
@@ -1267,7 +1248,13 @@ def generate_build_plan_recursive(
         total_runs = build_spec.runs_per_job * build_spec.count
 
         # Add root job
-        bp_name = sde.get_item_name_by_id(blueprint_type_id)
+        if activity_id == 1:
+            fallback_bp_name = f"{build_spec.item_name} Blueprint"
+        else:
+            fallback_bp_name = f"{build_spec.item_name} Reaction Formula"
+        bp_name = sde.get_item_name_by_id(
+            blueprint_type_id, fallback=fallback_bp_name
+        )
         activities = sde.load_activities()
         activity_row = activities[
             (activities["typeID"] == blueprint_type_id)
@@ -2610,26 +2597,25 @@ def _handle_reverse_engineering_with_inventory(
     inventory.produce(item_info.name, produced)
 
 
-def generate_build_plan_recursive_with_inventory(
+def _accumulate_build_plan_recursive_with_inventory(
     sde: SDELoader,
     build_spec: BuildSpec,
     config: PlanConfig,
     inventory: InventoryTracker,
-) -> BuildPlan:
+    materials_dict: dict[str, dict],
+    jobs: list[JobRow],
+) -> None:
     """
-    Generate a complete build plan with recursive building and inventory tracking.
+    Accumulate jobs and materials for one recursive build spec with inventory.
 
     Args:
         sde: SDE loader instance
         build_spec: Parsed build specification
         config: Plan configuration
         inventory: Inventory tracker for stocks and targets
-
-    Returns:
-        BuildPlan with materials and jobs
+        materials_dict: Materials accumulator
+        jobs: Jobs accumulator
     """
-    materials_dict: dict[str, dict] = {}
-    jobs: list[JobRow] = []
     buildable_requirements: dict[int, int] = {}
 
     # Handle different build spec formats (similar to generate_build_plan_recursive)
@@ -2838,7 +2824,13 @@ def generate_build_plan_recursive_with_inventory(
         root_te = build_spec.te
         total_runs = build_spec.runs_per_job * build_spec.count
 
-        bp_name = sde.get_item_name_by_id(blueprint_type_id)
+        if activity_id == 1:
+            fallback_bp_name = f"{build_spec.item_name} Blueprint"
+        else:
+            fallback_bp_name = f"{build_spec.item_name} Reaction Formula"
+        bp_name = sde.get_item_name_by_id(
+            blueprint_type_id, fallback=fallback_bp_name
+        )
         activities = sde.load_activities()
         activity_row = activities[
             (activities["typeID"] == blueprint_type_id) & (activities["activityID"] == activity_id)
@@ -2903,9 +2895,33 @@ def generate_build_plan_recursive_with_inventory(
                         "surplus": 0,
                     }
 
-    # Process all buildable items with inventory
     process_buildable_items_with_inventory(
         sde, buildable_requirements, config, jobs, materials_dict, inventory
+    )
+
+def generate_build_plan_recursive_with_inventory(
+    sde: SDELoader,
+    build_spec: BuildSpec,
+    config: PlanConfig,
+    inventory: InventoryTracker,
+) -> BuildPlan:
+    """
+    Generate a complete build plan with recursive building and inventory tracking.
+
+    Args:
+        sde: SDE loader instance
+        build_spec: Parsed build specification
+        config: Plan configuration
+        inventory: Inventory tracker for stocks and targets
+
+    Returns:
+        BuildPlan with materials and jobs
+    """
+    materials_dict: dict[str, dict] = {}
+    jobs: list[JobRow] = []
+
+    _accumulate_build_plan_recursive_with_inventory(
+        sde, build_spec, config, inventory, materials_dict, jobs
     )
 
     # Process targets
@@ -3154,8 +3170,12 @@ def process_buildable_items_with_inventory(
         still_needed = build_quantity
 
         if activity_id == 1:
-            me = config.component_bpo_defaults.me
-            te = config.component_bpo_defaults.te
+            if _is_t1_capital_ship(sde, type_id, types_df, groups_df):
+                me = 0
+                te = 0
+            else:
+                me = config.component_bpo_defaults.me
+                te = config.component_bpo_defaults.te
         else:
             me = 0
             te = 0
@@ -3228,6 +3248,7 @@ def aggregate_all_requirements_with_inventory(
 
     types_df = sde.load_types()
     groups_df = sde.load_groups()
+    activities = sde.load_activities()
 
     while to_process:
         type_id = to_process.pop(0)
@@ -3259,18 +3280,15 @@ def aggregate_all_requirements_with_inventory(
             continue
 
         if activity_id == 1:
-            item_row = types_df[types_df["typeID"] == type_id]
-            if len(item_row) > 0:
-                group_id = int(item_row.iloc[0]["groupID"])
-                group_row = groups_df[groups_df["groupID"] == group_id]
-                if len(group_row) > 0 and int(group_row.iloc[0]["categoryID"]) == 6:
-                    me = 0
-                else:
-                    me = config.component_bpo_defaults.me
+            if _is_t1_capital_ship(sde, type_id, types_df, groups_df):
+                me = 0
+                te = 0
             else:
                 me = config.component_bpo_defaults.me
+                te = config.component_bpo_defaults.te
         else:
             me = 0
+            te = 0
 
         output_per_run = sde.get_output_quantity(blueprint_type_id, activity_id)
         runs_needed = math.ceil(still_needed / output_per_run)
@@ -3278,6 +3296,15 @@ def aggregate_all_requirements_with_inventory(
         if type_id in last_runs and last_runs[type_id] == runs_needed:
             continue
         last_runs[type_id] = runs_needed
+
+        activity_row = activities[
+            (activities["typeID"] == blueprint_type_id)
+            & (activities["activityID"] == activity_id)
+        ]
+        base_time_seconds = int(activity_row.iloc[0]["time"])
+        split_jobs = split_job(
+            runs_needed, base_time_seconds, te, config.te_bonus, config.split_days
+        )
 
         materials_df = sde.load_activity_materials()
         material_rows = materials_df[
@@ -3293,7 +3320,9 @@ def aggregate_all_requirements_with_inventory(
 
             if activity_id == 1:
                 per_run = max(1, round(base_quantity * (1 - me / 100), 2))
-                mat_quantity_needed = math.ceil(per_run * runs_needed)
+                mat_quantity_needed = sum(
+                    math.ceil(per_run * job_runs) for job_runs, _ in split_jobs
+                )
             else:
                 mat_quantity_needed = base_quantity * runs_needed
 

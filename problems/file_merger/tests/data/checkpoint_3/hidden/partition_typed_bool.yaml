@@ -1,11 +1,12 @@
 case:
   arguments: --output out --key id --partition-by active --schema schema.json data.csv
   input_files:
-    - content: 'id,active
-1,1
-2,True
-3,0
-4,false'
+    - content: |-
+        id,active
+        1,1
+        2,True
+        3,0
+        4,false
       file_type: text
       path: data.csv
     - content:
