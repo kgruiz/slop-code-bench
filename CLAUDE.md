@@ -1,72 +1,346 @@
-# SlopCodeBench Paper Repository
+# CLAUDE.md
 
-## CRITICAL — Data Integrity
-- **NEVER filter checkpoints in `data/checkpoints.csv` based on `status` or `state`.** All rows (`ran`, `unknown`, `error`) have full metrics. Filtering silently drops data.
-- Some runs have fewer than 93 checkpoints (agent crashed). For **correctness metrics**, treat missing as 0. For **quality metrics**, leave them absent.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## CRITICAL — Writing Style
-These are the rules you are most likely to violate. Treat each as a strong default, not a suggestion.
+## Project Overview
 
-**Em dashes** — Avoid entirely. Use commas, semicolons, periods, or restructure the sentence.
+SlopCodeBench (SCBench) is a benchmark for evaluating coding agents under iterative specification refinement. Agents implement a spec, then extend their own code as the spec changes through checkpoints, exposing behaviors like path dependence, non-convergence, and trade-offs between explicit handling and structural stability.
 
-**LinkedIn/corporate voice** — Words like "notably", "robust", "comprehensive", "leveraging", "significant" (outside statistics), "key insight", "crucially", "importantly" should be rare to nonexistent. Write like a scientist, not a thought leader.
+## Essential Commands
 
-**Colons** — Do not use colons to introduce explanatory clauses. Restructure as a separate sentence. Counted lists are fine ("three patterns: X, Y, and Z").
+### Setup and Installation
+```bash
+uv sync                          # Install dependencies (Python 3.12+ required)
+```
 
-**Parenthetical asides** — Avoid. Inline the content as a standalone clause or sentence.
+### Running Agents
+```bash
+# Run an agent on a problem
+uv run slop-code run \
+  --agent claude_code \
+  --model anthropic/opus-4.5 \
+  --environment configs/environments/docker-python3.12-uv.yaml \
+  --prompt configs/prompts/just-solve.jinja \
+  --problem file_backup \
+  thinking=low \
+  version=2.0.51
 
-**Statistical test results** — Do not carpet-bomb paragraphs with $\rho_s$ and p-values. Use them ONLY when the statistical relationship itself is the claim. Lead results with concrete numbers (percentages, counts, ranges), not test statistics.
+# Run multiple problems
+uv run slop-code run --problem file_backup --problem execution_server ...
+```
 
-## Paper Overview
-- **Title**: SlopCodeBench: Measuring Code Erosion Under Iterative Specification Refinement
-- **Venue**: NeurIPS 2026 (preprint)
-- **Dual claim**: (1) Iterative evaluation is the correct frame for coding agents because real development is iterative, (2) verbosity and structural erosion can only be measured under iteration; their compounding nature is the phenomenon.
-- **Three findings**: (1) verbosity signals predict downstream performance while structural erosion does not, because tests are blind to sloppiness, (2) high-complexity symbols grow across checkpoints even when pass rates are stable, (3) initial design decisions compound into high variance
-- **Contributions**: the benchmark (20 problems, 93 checkpoints), two-dimensional quality metrics (verbosity + structural erosion), initial experimental findings
+**Run parameters:**
+- `thinking=none|low|medium|high` - Extended thinking budget (low=10k, medium=20k, high=40k tokens)
+- `version=X.Y.Z` - Agent version to use
+- Results saved to: `outputs/{model}/{agent}-{prompt}_{params}_{timestamp}/`
 
-## Prompt Convention
-Main results use **only** the `just-solve` prompt. The section on prompt differences includes all prompt variants.
+### Evaluation
+```bash
+# Evaluate a run directory
+slop-code eval outputs/<run-directory>/
 
-## Key Terminology
-- **Slop**: Low-quality high-volume LLM code (verbose comments, defensive coding, unrequested features, bloated control flow)
-- **Checkpoint**: One step in a problem's evolution; tuple of (spec $x_i$, test suite $\tau_i$). Agent receives $x_i$ + prior solution $s_{i-1}$, produces $s_i$
-- **Verbosity**: `{AST-Grep Flagged Lines ∪ Clone Lines} / LOC`
-- **Structural erosion**: `mass.high_cc_pct`; percent of CC mass from functions with CC > 10, where `mass.cc = sum(complexity * sqrt(symbol_sloc))`
-- **LOC**: Logical lines (excludes comments and blanks); used for normalization throughout
-- **Trivial wrapper**: A function whose only statement returns the result of calling another function
-- **Single-use function**: A function called exactly once in the entire codebase
+# Grade code quality with LLM judge
+slop-code metrics judge \
+  --rubric configs/rubrics/llm_judge.jsonl \
+  --model <model on openrouter> \
+  --criteria-template configs/rubrics/templates/criteria_with_pn.j2 \
+  --prefix-template configs/rubrics/templates/no_expl.j2
+```
 
-Note: delta metrics (loc, ast_grep_violations, churn_ratio) are not precomputed; calculate them manually from checkpoint data when needed.
+### Testing
+```bash
+uv run pytest -q                          # Run all tests
+uv run pytest tests/path/to/test_file.py  # Run specific test file
+uv run pytest -xvs                        # Verbose with early exit on failure
+```
 
-## LaTeX Conventions
-- Citations: `\citet{}` for textual, `\citep{}` for parenthetical (natbib)
-- Cross-refs: always use `\autoref{}`. No manual `Figure~\ref{}` or `Table~\ref{}`
-- Label prefixes: `sec:`, `fig:`, `tab:`, `eq:`
-- Code listings: `lstlisting` with captions; Python highlighting preconfigured
-- Math: `\text{}` for named quantities (`\text{Verbosity}`, `\text{LOC}`, `\text{Erosion}`)
-- Model names: tilde between name and version (GPT~5.2, Opus~4.5)
+### Testing Problem Solutions
 
-## Writing Style — Additional
-- 50/50 active "we" / passive voice; editorial "we" for emphasis
-- End sections with a **bolded summary sentence**
-- No rhetorical questions, ever
-- Vary paragraph openings (topic sentence, data-first, backward reference)
-- Hedge with "we hypothesize" not "may/might"; use "suggests" or "consistent with"
-- Null results stated directly: "X has no effect on Y" or "changes Y by <1%"
-- Ranges: "15% to 30%" in prose (no en-dash); CI or ± for statistics
-- Oxford comma always; inline lists with count prefix
-- "our approach", "this work", or method name (not "the proposed method")
-- MINIMAL em-dashes/colons/parentheticals.
+**Use the `/run-tests` skill instead of raw pytest for problem tests.** This ensures tests run in the correct Docker environment with proper isolation.
 
-## Scripts
-Scripts assume CWD is repo root. Shared code lives in `src/scbench/`, not as cross-imported helpers inside `scripts/`.
+```bash
+# Use the skill:
+/run-tests <snapshot_path> <problem_name> <checkpoint_index>
 
-- `scripts/pipeline/` — extraction and dataset builders
-- `scripts/generation/` — table/macro/report generators
-- `scripts/plotting/` — figure entrypoints
-- `scripts/exploration/` — ablations, comparisons, sweeps
+# Example:
+/run-tests outputs/run_001/submissions/file_backup/checkpoint_2/snapshot file_backup checkpoint_2
+```
 
-## Links
-- Repo: https://github.com/SprocketLab/slop-code-bench/
-- Website: https://www.scbench.ai
-- Blog: https://gabeorlanski.github.io/posts/slop-code-bench/
+The underlying command is:
+```bash
+slop-code --quiet eval-snapshot {snapshot_path} \
+  -p {problem_name} \
+  -c {checkpoint_index} \
+  -e configs/environments/docker-python3.12-uv.yaml \
+  -o /tmp/eval-output \
+  --json
+```
+
+Results are saved to the output directory with `evaluation.json` (test results) and `quality_analysis/` (code metrics).
+
+### Code Quality
+```bash
+uv run ruff check .                       # Lint
+uv run isort .                            # Format imports
+```
+
+## Architecture
+
+### Core Module Structure
+
+**`src/slop_code/`** - Main library organized into:
+
+- **`agent_runner/`** - Agent lifecycle management and execution
+  - `agent.py` - Agent base class and protocol
+  - `registry.py` - Agent and config registration system
+  - `state.py` - Agent state management across checkpoints
+  - `trajectory.py` - Execution history tracking
+  - `agents/` - Agent implementations (claude_code, codex, gemini, miniswe, opencode, openhands)
+  - `credentials.py` - API key and credential management
+
+- **`execution/`** - Isolated execution environments
+  - `session.py` - Session lifecycle: workspace + runtime coordination
+  - `workspace.py` - Isolated directories, snapshots, file operations
+  - `runtime.py` - `SubmissionRuntime` protocol for command execution
+  - `docker_runtime/` - Docker container execution with networking and setup scripts
+  - `snapshot.py` - Capturing workspace state and diffs between checkpoints
+  - `assets.py` - Static asset resolution and placeholder substitution
+  - `models.py` - `EnvironmentSpec` and related Pydantic models
+
+- **`evaluation/`** - Pytest-based test execution and validation
+  - `config.py` - `ProblemConfig`, `CheckpointConfig`, `MarkerConfig` definitions
+  - `pytest_runner.py` - `PytestRunner` orchestrates pytest execution via uvx
+  - `report.py` - `CorrectnessResults`, `TestResult`, and `GroupType` (CORE, FUNCTIONALITY, REGRESSION, ERROR)
+
+- **`metrics/`** - Code quality measurement
+  - `driver.py` - Quality metric orchestration
+  - `grade.py` - Grading logic and scoring
+  - `models.py` - Core data models for metrics
+  - `checkpoint/` - Per-checkpoint quality tracking and extraction
+  - `summary/` - Aggregation and run-level statistics
+  - `languages/` - Language-specific parsers (Python, JavaScript, etc.)
+  - `rubric/` - LLM judge templates and criteria
+
+- **`entrypoints/`** - CLI and command handlers
+  - `cli.py` - Main Typer application entry point (registered as `slop-code`)
+  - `commands/` - Individual command implementations (run_agent, eval_*, docker, etc.)
+  - `config/` - Run configuration loading and resolvers
+  - `problem_runner/` - Problem execution driver and state management
+  - `evaluation/` - Evaluation command drivers
+
+- **`dashboard/`** - Dash-based visualization UI
+  - `app.py` - Main Dash application
+  - `pages/` - Individual dashboard pages (overview, checkpoints, quality, efficiency, etc.)
+  - `graphs/` - Plotly graph components
+
+- **`common/`** - Shared utilities
+  - `common.py` - General helpers
+  - `constants.py` - System-wide constants
+  - `llms.py` - LLM API interactions via litellm
+  - `paths.py` - Path resolution utilities
+
+### Key Architectural Patterns
+
+**Session → Workspace → Runtime Flow:**
+1. `Session` manages overall execution lifecycle
+2. `Workspace` provides isolated directory with file operations and snapshotting
+3. `SubmissionRuntime` (Docker or Local) executes commands and captures output
+4. Snapshots capture state between checkpoints for comparison
+
+**Agent Execution Flow:**
+1. Agent registered via `register_agent()` and `register_agent_config()`
+2. `ProblemRunner` loads problem config and creates workspace
+3. For each checkpoint:
+   - Agent receives spec and implements solution
+   - `Session.spawn()` creates runtime
+   - Evaluation runs test cases via adapters
+   - Workspace snapshot captures final state
+   - Quality metrics computed via language parsers
+4. Results aggregated into `CorrectnessResults` and quality reports
+
+**Problem Evaluation Flow:**
+1. `ProblemConfig` defines checkpoints with pytest markers
+2. Each checkpoint has `checkpoint_N.md` (spec) and `tests/test_checkpoint_N.py` (tests)
+3. `PytestRunner` copies tests to workspace, generates pytest.ini with markers
+4. Pytest runs via `uvx` (isolated from solution environment)
+5. Tests categorized by markers: unmarked=CORE, `@pytest.mark.functionality`=FUNCTIONALITY, `@pytest.mark.error`=ERROR, prior checkpoint tests=REGRESSION
+6. `PassPolicy` ("core-cases" or "all-non-error-cases") determines checkpoint success
+7. Metrics computed: correctness (pass/fail) + quality (complexity, duplication, etc.)
+
+**Configuration Hierarchy:**
+- `configs/agents/*.yaml` - Agent definitions
+- `configs/models/*.yaml` - Model specifications
+- `configs/environments/*.yaml` - Runtime environments (Docker, local)
+- `configs/prompts/*.jinja` - Agent prompt templates
+- `configs/runs/*.yaml` - Complete run configurations
+- `problems/*/config.yaml` - Problem-specific settings (inline checkpoints)
+
+### Problem Structure
+
+Each problem in `problems/` follows this pattern:
+```
+problem_name/
+├── config.yaml              # Problem metadata and inline checkpoint definitions
+├── checkpoint_1.md          # Specification for checkpoint 1
+├── checkpoint_2.md          # Specification for checkpoint 2
+└── tests/
+    ├── conftest.py          # Pytest configuration (entrypoint, checkpoint fixtures)
+    ├── test_checkpoint_1.py # Tests for checkpoint 1
+    ├── test_checkpoint_2.py # Tests for checkpoint 2
+    ├── data/                # Test case data
+    │   ├── checkpoint_1/
+    │   │   ├── core/        # Core test cases (must pass)
+    │   │   ├── hidden/      # Functionality tests (optional)
+    │   │   └── errors/      # Error handling tests
+    │   └── checkpoint_2/
+    └── assets/              # Static test files
+```
+
+**Modern config.yaml structure** (checkpoints are inline, not separate files):
+```yaml
+name: problem_name
+entry_file: main_command
+timeout: 20
+checkpoints:
+  checkpoint_1:
+    version: 1
+    order: 1
+    state: Core Tests
+  checkpoint_2:
+    version: 1
+    order: 2
+    state: Extended Features
+test_dependencies:
+  - pyyaml  # Additional packages for test environment
+markers:  # Custom pytest markers beyond built-ins
+  custom_marker:
+    description: Custom test category
+    group: Functionality
+```
+
+## Important Technical Notes
+
+### Configuration System
+- All configuration uses Pydantic models with strict validation
+- OmegaConf used for YAML loading with resolvers
+- Checkpoints are now defined inline in `config.yaml`, not as separate `checkpoint_N/config.yaml` files
+- Static assets support placeholder resolution (e.g., `%%%ENTRYPOINT:entry_file%%%`)
+
+### Agent Implementation
+- Agents must implement `Agent` protocol from `agent_runner/agent.py`
+- Lifecycle methods: `setup()`, `run()`, `reset()`, `cleanup()`
+- State preserved between checkpoints via `AgentState`
+- Credentials loaded from environment variables via `credentials.py`
+
+### Docker Execution
+- First run builds Docker images (5-10 minutes), subsequent runs are fast
+- Images cached per agent version
+- Workspaces mounted into containers with isolated networking
+- Setup commands run before each checkpoint
+
+### Evaluation System
+- **GroupType**: CORE (must pass), FUNCTIONALITY (optional), REGRESSION (from prior checkpoints), ERROR (expected failures)
+- **PassPolicy**: `"core-cases"` (all CORE tests pass), `"all-non-error-cases"` (CORE + FUNCTIONALITY + REGRESSION all pass)
+- **Markers**: Tests categorized by pytest markers (`@pytest.mark.error`, `@pytest.mark.functionality`)
+- **Isolation**: Tests run via `uvx` for complete isolation from solution environment
+
+### Quality Metrics
+- Language-specific parsers extract AST information
+- Metrics: cyclomatic complexity, duplication, code churn, maintainability index
+- ast-grep rules in `configs/ast-grep-rules/` for pattern-based analysis
+- LLM judge for subjective quality assessment via rubric templates
+
+### Logging and Debugging
+- Uses `structlog` with structured logging throughout
+- Set `verbose=True` in logger calls for detailed output
+- Workspace snapshots enable diffing between checkpoints
+- `outputs/` contains full execution artifacts per run
+
+## Common Patterns
+
+### Adding a New Agent
+1. Create agent class in `src/slop_code/agent_runner/agents/`
+2. Implement `Agent` protocol (setup, run, reset, cleanup)
+3. Create config class extending `AgentConfigBase`
+4. Register with `register_agent()` and `register_agent_config()`
+5. Add YAML config to `configs/agents/`
+6. Document in `docs/agents/agents/`
+
+### Adding a New Problem
+1. Design checkpoints and spec (see `docs/contributing-problems/`)
+2. Create directory structure in `problems/`
+3. Write `config.yaml` with inline checkpoint definitions
+4. Write `checkpoint_N.md` for each checkpoint specification
+5. Create `tests/conftest.py` with entrypoint/checkpoint fixtures
+6. Write `tests/test_checkpoint_N.py` for each checkpoint
+7. Add test data in `tests/data/checkpoint_N/{core,hidden,errors}/`
+8. Use pytest markers for test categorization (`@pytest.mark.error`, etc.)
+9. Validate with `slop-code eval` and submit PR
+
+### Running Evaluation on Existing Workspace
+```bash
+# Evaluate checkpoint without re-running agent
+slop-code eval checkpoint \
+  --workspace outputs/{run}/submissions/{problem}/checkpoint_N/ \
+  --problem {problem} \
+  --checkpoint checkpoint_N
+```
+
+### Extracting Quality Metrics
+```bash
+# Run static analysis on checkpoint
+slop-code metrics static \
+  --workspace outputs/{run}/submissions/{problem}/checkpoint_N/
+```
+
+## Development Workflow
+
+1. **Branch from main** - Latest stable code on `main`
+2. **Run tests** - `uv run pytest -q` before committing
+3. **Lint** - `uv run ruff check .` and `uv run isort .`
+4. **Commit style** - Short, capitalized summaries (e.g., "Fix Docker runtime cleanup")
+5. **PR** - Include description, link issues, note tests run, add screenshots for UI changes
+
+## Known Limitations
+
+- Docker required - no pure local execution for benchmarks
+- First run slow due to image builds (cached afterward)
+- Some agents (OpenHands) require additional dependencies (see `dependency-groups.openhands`)
+- LLM judge quality depends on model capabilities
+- Workspace diffs large for binary files
+
+## Available Skills
+
+Skills are invoked with `/skill-name <args>`. See `.claude/skills/` for full documentation.
+
+| Skill | Usage | Description |
+|-------|-------|-------------|
+| `/run-tests` | `/run-tests <snapshot> <problem> <checkpoint>` | Run problem tests in Docker using eval-snapshot |
+| `/fix-solution` | `/fix-solution <snapshot> <problem> <checkpoint>` | Iteratively test and repair a solution until tests pass |
+| `/edge-cases` | `/edge-cases <problem> <checkpoint>` | Analyze tests and suggest missing edge cases |
+| `/validate-run` | `/validate-run <run_path> [problem]` | Validate all checkpoints from an agent run |
+| `/test-ambiguity-detector` | `/test-ambiguity-detector <problem> <checkpoint>` | Find ambiguous test assumptions |
+
+## Key Files to Reference
+
+### Core Implementation
+- `src/slop_code/agent_runner/agent.py` - Agent protocol definition
+- `src/slop_code/execution/session.py` - Execution session management
+- `src/slop_code/evaluation/pytest_runner.py` - Pytest execution orchestration
+- `src/slop_code/entrypoints/problem_runner/driver.py` - Problem execution driver
+
+### Documentation
+- `docs/execution/README.md` - Execution architecture deep dive
+- `docs/evaluation/README.md` - Evaluation system guide
+- `docs/problems/tutorial.md` - Problem creation tutorial
+
+### Pytest Documentation
+- `docs/evaluation-tests/README.md` - How pytest evaluation works
+- `docs/evaluation-tests/conftest-patterns.md` - Fixture patterns (session, module, factory)
+- `docs/evaluation-tests/markers.md` - Test categorization (CORE, FUNCTIONALITY, ERROR, REGRESSION)
+- `docs/evaluation-tests/test-data.md` - Organizing test data (inline vs external)
+- `docs/evaluation-tests/runner-internals.md` - Technical reference for PytestRunner
+- `docs/evaluation-tests/fixtures-advanced.md` - Advanced patterns (expensive resources, composition)
+- `docs/evaluation-tests/stateful-testing.md` - State across checkpoints and modules
+- `docs/evaluation-tests/complex-parametrization.md` - Loading cases from JSON, YAML, directories
+- `docs/evaluation-tests/debugging-workflows.md` - Debugging test failures and workflows

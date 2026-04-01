@@ -164,6 +164,8 @@ def _manage_run_selection_logic(
         if current_selection is not None:
             visible_set = set(visible_run_values)
             new_selection = [r for r in current_selection if r in visible_set]
+            if not new_selection and visible_run_values:
+                new_selection = visible_run_values
         else:
             new_selection = visible_run_values
 
@@ -213,9 +215,11 @@ def register_settings_callbacks(app):
         start_date = min_date
         end_date = max_date
         thinking_value = thinking_options
-        min_problems = app_config.get("max_problems_found", 0)
+        min_problems = 0
         disable_colors = []
         show_annotations = False
+        group_runs = False
+        common_problems_only = False
 
         # Override with saved settings if available
         if saved_settings:
