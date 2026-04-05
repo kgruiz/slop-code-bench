@@ -78,6 +78,11 @@ providers:
     env_var: CLAUDE_CODE_OAUTH_TOKEN
     description: Claude Code OAuth token for authentication
 
+  bedrock:
+    type: env_var
+    env_var: AWS_BEARER_TOKEN_BEDROCK
+    description: AWS Bedrock bearer token for Claude Code via Bedrock
+
   xai:
     type: env_var
     env_var: XAI_API_KEY

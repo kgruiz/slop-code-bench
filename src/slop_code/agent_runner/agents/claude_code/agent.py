@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections.abc
 import json
+import os
 import shlex
 import tempfile
 import typing as tp
@@ -18,8 +19,6 @@ from slop_code.agent_runner.agent import AgentConfigBase
 from slop_code.agent_runner.agents.cli_utils import AgentCommandResult
 from slop_code.agent_runner.agents.cli_utils import stream_cli_command
 from slop_code.agent_runner.agents.utils import HOME_PATH
-from slop_code.agent_runner.agents.utils import copy_jsonl_files
-from slop_code.agent_runner.agents.utils import find_jsonl_files
 from slop_code.agent_runner.agents.utils import resolve_env_vars
 from slop_code.agent_runner.credentials import ProviderCredential
 from slop_code.agent_runner.models import AgentCostLimits
@@ -145,6 +144,8 @@ class ClaudeCodeAgent(Agent):
         thinking: ThinkingPreset | None,
         max_thinking_tokens: int | None,
         max_output_tokens: int | None,
+        *,
+        bedrock: bool = False,
     ) -> None:
         super().__init__(
             agent_name="claude_code",
@@ -170,6 +171,7 @@ class ClaudeCodeAgent(Agent):
         self.thinking = thinking
         self.max_thinking_tokens = max_thinking_tokens
         self.max_output_tokens = max_output_tokens
+        self._bedrock = bedrock
         self._session: Session | None = None
         self._environment: EnvironmentSpec | None = None
         self._runtime: StreamingRuntime | None = None
@@ -264,6 +266,7 @@ class ClaudeCodeAgent(Agent):
             thinking=thinking,
             max_thinking_tokens=max_thinking_tokens,
             max_output_tokens=config.max_output_tokens,
+            bedrock=credential.provider == "bedrock",
         )
 
     @property
@@ -312,27 +315,24 @@ class ClaudeCodeAgent(Agent):
                 "ClaudeCodeAgent has not been set up with a session"
             )
 
-        # Build settings dict, merging with max_output_tokens if specified
         settings = dict(resolve_env_vars(self.settings))
         if self.max_output_tokens is not None:
             settings["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = self.max_output_tokens
+        settings.setdefault("showThinkingSummaries", True)
+        settings.setdefault("alwaysThinkingEnabled", True)
 
-        settings_path = Path(self._tmp_dir.name) / "settings.json"
+        claude_home = Path(self._tmp_dir.name) / "claude_home"
+        claude_home.mkdir(parents=True, exist_ok=True)
+        claude_home.chmod(0o777)
+
+        settings_path = claude_home / "settings.json"
         settings_path.write_text(json.dumps(settings))
         self._settings_path = settings_path
-
-        projects_dir = Path(self._tmp_dir.name) / "claude_projects"
-        projects_dir.mkdir(parents=True, exist_ok=True)
-        projects_dir.chmod(0o777)
-        self._trace_dir = projects_dir
+        self._trace_dir = claude_home
 
         return {
-            str(settings_path): {
-                "bind": f"{HOME_PATH}/.claude/settings.json",
-                "mode": "rw",
-            },
-            str(projects_dir): {
-                "bind": f"{HOME_PATH}/.claude/projects",
+            str(claude_home): {
+                "bind": f"{HOME_PATH}/.claude",
                 "mode": "rw",
             },
         }
@@ -572,14 +572,43 @@ class ClaudeCodeAgent(Agent):
     ) -> tuple[collections.abc.Sequence[str] | str, dict[str, str]]:
         env_overrides = {key: str(value) for key, value in self.env.items()}
 
-        # Set credential in environment
-        env_overrides[self.credential.destination_key] = self.credential.value
-        # When using a non-Claude-Code credential, also set ANTHROPIC_AUTH_TOKEN
-        if self.credential.destination_key not in (
-            "ANTHROPIC_API_KEY",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-        ):
-            env_overrides["ANTHROPIC_AUTH_TOKEN"] = self.credential.value
+        if self._bedrock:
+            env_overrides["CLAUDE_CODE_USE_BEDROCK"] = "1"
+            env_overrides["AWS_BEARER_TOKEN_BEDROCK"] = self.credential.value
+            env_overrides["AWS_REGION"] = os.environ.get(
+                "AWS_REGION", "us-east-1"
+            )
+            for var in (
+                "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+                "ANTHROPIC_BEDROCK_BASE_URL",
+            ):
+                val = os.environ.get(var)
+                if val:
+                    env_overrides[var] = val
+            for var, default in (
+                (
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                    "us.anthropic.claude-opus-4-6-v1",
+                ),
+                (
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                    "us.anthropic.claude-sonnet-4-6",
+                ),
+                (
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                ),
+            ):
+                env_overrides[var] = os.environ.get(var, default)
+        else:
+            env_overrides[self.credential.destination_key] = (
+                self.credential.value
+            )
+            if self.credential.destination_key not in (
+                "ANTHROPIC_API_KEY",
+                "CLAUDE_CODE_OAUTH_TOKEN",
+            ):
+                env_overrides["ANTHROPIC_AUTH_TOKEN"] = self.credential.value
         if self.max_output_tokens is not None:
             env_overrides["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
                 self.max_output_tokens
@@ -686,17 +715,26 @@ class ClaudeCodeAgent(Agent):
                 "agent.claude_code.traces.skipped", reason="no_trace_dir"
             )
             return
-        jsonl_files = find_jsonl_files(self._trace_dir)
-        self.log.debug(
-            "agent.claude_code.traces.found",
-            trace_dir=str(self._trace_dir),
-            files=len(jsonl_files),
-        )
-        copied = copy_jsonl_files(jsonl_files, output_dir)
+        if not self._trace_dir.exists():
+            self.log.debug(
+                "agent.claude_code.traces.skipped",
+                reason="trace_dir_missing",
+            )
+            return
+        dest = output_dir / "workspace"
+        copied = 0
+        for item in self._trace_dir.rglob("*"):
+            if not item.is_file():
+                continue
+            rel = item.relative_to(self._trace_dir)
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(item.read_bytes())
+            copied += 1
         self.log.debug(
             "agent.claude_code.traces.saved",
             output_dir=str(output_dir),
-            saved=len(copied),
+            saved=copied,
         )
 
     def cleanup(self) -> None:

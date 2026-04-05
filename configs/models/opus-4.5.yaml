@@ -19,3 +19,6 @@ agent_specific:
 
   opencode:
     provider_name: anthropic
+
+provider_slugs:
+  bedrock: us.anthropic.claude-opus-4-5-20251101-v1:0

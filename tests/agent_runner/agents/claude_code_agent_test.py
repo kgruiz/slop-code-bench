@@ -132,7 +132,7 @@ class TestClaudeCodeAgent:
         mock_pricing,
         mock_credential,
     ):
-        """save_artifacts copies Claude Code trace jsonl files from home."""
+        """save_artifacts copies full workspace from trace dir."""
         runtime = FakeRuntime()
         spec = DockerEnvironmentSpec(
             name="test",
@@ -171,15 +171,21 @@ class TestClaudeCodeAgent:
         assert agent._trace_dir is not None
         trace_dir = agent._trace_dir
         trace_dir.mkdir(parents=True, exist_ok=True)
-        trace_file = trace_dir / "trace.jsonl"
-        trace_file.write_text('{"type":"system","subtype":"init"}\n')
+        nested = trace_dir / "proj" / "trace.jsonl"
+        nested.parent.mkdir(parents=True, exist_ok=True)
+        nested.write_text('{"type":"system","subtype":"init"}\n')
+        other_file = trace_dir / "data.txt"
+        other_file.write_text("hello")
 
         output_dir = tmp_path / "artifacts"
         agent.save_artifacts(output_dir)
 
-        saved_trace = output_dir / "trace.jsonl"
+        saved_trace = output_dir / "workspace" / "proj" / "trace.jsonl"
         assert saved_trace.exists()
-        assert saved_trace.read_text() == trace_file.read_text()
+        assert saved_trace.read_text() == nested.read_text()
+        saved_other = output_dir / "workspace" / "data.txt"
+        assert saved_other.exists()
+        assert saved_other.read_text() == "hello"
 
     def test_setup_uses_default_home_for_docker(
         self,
@@ -230,7 +236,7 @@ class TestClaudeCodeAgent:
         assert session.last_spawn_mounts is not None
         assert any(
             isinstance(value, dict)
-            and value.get("bind") == f"{HOME_PATH}/.claude/projects"
+            and value.get("bind") == f"{HOME_PATH}/.claude"
             for value in session.last_spawn_mounts.values()
         )
 
@@ -277,11 +283,6 @@ class TestClaudeCodeAgent:
         output_dir = tmp_path / "artifacts"
         agent._save_claude_traces(output_dir)
 
-        assert any(
-            event == "agent.claude_code.traces.found"
-            and kwargs.get("files") == 1
-            for event, kwargs in logger.debug_calls
-        )
         assert any(
             event == "agent.claude_code.traces.saved"
             and kwargs.get("saved") == 1
@@ -336,6 +337,8 @@ class TestClaudeCodeAgent:
         assert agent._settings_path is not None
         settings_content = json.loads(agent._settings_path.read_text())
         assert settings_content["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == 64000
+        assert settings_content["showThinkingSummaries"] is True
+        assert settings_content["alwaysThinkingEnabled"] is True
         # Verify existing settings are preserved
         assert settings_content["existingSetting"] == "value"
 
@@ -668,3 +671,220 @@ class TestParseLineErrorHandling:
 
         # Flag should be cleared
         assert agent._got_successful_result is False
+
+
+class TestBedrockMode:
+    """Tests for Bedrock integration in ClaudeCodeAgent."""
+
+    @pytest.fixture
+    def bedrock_credential(self):
+        return ProviderCredential(
+            provider="bedrock",
+            value="test-bedrock-token",
+            source="AWS_BEARER_TOKEN_BEDROCK",
+            destination_key="AWS_BEARER_TOKEN_BEDROCK",
+            credential_type=CredentialType.ENV_VAR,
+        )
+
+    def _make_bedrock_agent(
+        self, mock_cost_limits, mock_pricing, bedrock_credential
+    ):
+        return ClaudeCodeAgent(
+            problem_name="test-problem",
+            image="test-image",
+            verbose=False,
+            cost_limits=mock_cost_limits,
+            pricing=mock_pricing,
+            credential=bedrock_credential,
+            binary="claude",
+            model="us.anthropic.claude-sonnet-4-6",
+            timeout=None,
+            settings={},
+            env={},
+            extra_args=[],
+            append_system_prompt=None,
+            allowed_tools=[],
+            disallowed_tools=[],
+            permission_mode=None,
+            base_url=None,
+            thinking=None,
+            max_thinking_tokens=None,
+            max_output_tokens=None,
+            bedrock=True,
+        )
+
+    def test_bedrock_flag_set_from_credential(
+        self, mock_cost_limits, mock_pricing, bedrock_credential
+    ):
+        agent = self._make_bedrock_agent(
+            mock_cost_limits, mock_pricing, bedrock_credential
+        )
+        assert agent._bedrock is True
+
+    def test_non_bedrock_agent_has_bedrock_false(
+        self, mock_cost_limits, mock_pricing, mock_credential
+    ):
+        agent = ClaudeCodeAgent(
+            problem_name="test-problem",
+            image="test-image",
+            verbose=False,
+            cost_limits=mock_cost_limits,
+            pricing=mock_pricing,
+            credential=mock_credential,
+            binary="claude",
+            model="claude-test",
+            timeout=None,
+            settings={},
+            env={},
+            extra_args=[],
+            append_system_prompt=None,
+            allowed_tools=[],
+            disallowed_tools=[],
+            permission_mode=None,
+            base_url=None,
+            thinking=None,
+            max_thinking_tokens=None,
+            max_output_tokens=None,
+        )
+        assert agent._bedrock is False
+
+    def test_bedrock_env_vars_set_in_prepare_runtime(
+        self,
+        mock_cost_limits,
+        mock_pricing,
+        bedrock_credential,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("AWS_REGION", "eu-west-1")
+        agent = self._make_bedrock_agent(
+            mock_cost_limits, mock_pricing, bedrock_credential
+        )
+        _, env = agent._prepare_runtime_execution("do the thing")
+
+        assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+        assert env["AWS_BEARER_TOKEN_BEDROCK"] == "test-bedrock-token"
+        assert env["AWS_REGION"] == "eu-west-1"
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "ANTHROPIC_AUTH_TOKEN" not in env
+
+    def test_bedrock_defaults_region_to_us_east_1(
+        self,
+        mock_cost_limits,
+        mock_pricing,
+        bedrock_credential,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("AWS_REGION", raising=False)
+        agent = self._make_bedrock_agent(
+            mock_cost_limits, mock_pricing, bedrock_credential
+        )
+        _, env = agent._prepare_runtime_execution("task")
+
+        assert env["AWS_REGION"] == "us-east-1"
+
+    def test_bedrock_passes_optional_env_vars(
+        self,
+        mock_cost_limits,
+        mock_pricing,
+        bedrock_credential,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION", "us-west-2")
+        monkeypatch.setenv(
+            "ANTHROPIC_BEDROCK_BASE_URL",
+            "https://bedrock-runtime.us-east-1.amazonaws.com",
+        )
+        agent = self._make_bedrock_agent(
+            mock_cost_limits, mock_pricing, bedrock_credential
+        )
+        _, env = agent._prepare_runtime_execution("task")
+
+        assert env["ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION"] == "us-west-2"
+        assert (
+            env["ANTHROPIC_BEDROCK_BASE_URL"]
+            == "https://bedrock-runtime.us-east-1.amazonaws.com"
+        )
+
+    def test_bedrock_optional_env_vars_omitted_when_unset(
+        self,
+        mock_cost_limits,
+        mock_pricing,
+        bedrock_credential,
+        monkeypatch,
+    ):
+        monkeypatch.delenv(
+            "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION", raising=False
+        )
+        monkeypatch.delenv("ANTHROPIC_BEDROCK_BASE_URL", raising=False)
+        agent = self._make_bedrock_agent(
+            mock_cost_limits, mock_pricing, bedrock_credential
+        )
+        _, env = agent._prepare_runtime_execution("task")
+
+        assert "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION" not in env
+        assert "ANTHROPIC_BEDROCK_BASE_URL" not in env
+
+    def test_bedrock_sets_default_model_versions(
+        self,
+        mock_cost_limits,
+        mock_pricing,
+        bedrock_credential,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("ANTHROPIC_DEFAULT_OPUS_MODEL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", raising=False)
+        agent = self._make_bedrock_agent(
+            mock_cost_limits, mock_pricing, bedrock_credential
+        )
+        _, env = agent._prepare_runtime_execution("task")
+
+        assert (
+            env["ANTHROPIC_DEFAULT_OPUS_MODEL"]
+            == "us.anthropic.claude-opus-4-6-v1"
+        )
+        assert (
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"]
+            == "us.anthropic.claude-sonnet-4-6"
+        )
+        assert (
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
+            == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        )
+
+    def test_bedrock_model_versions_overridable_from_env(
+        self,
+        mock_cost_limits,
+        mock_pricing,
+        bedrock_credential,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "custom-opus-id")
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "custom-sonnet-id")
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "custom-haiku-id")
+        agent = self._make_bedrock_agent(
+            mock_cost_limits, mock_pricing, bedrock_credential
+        )
+        _, env = agent._prepare_runtime_execution("task")
+
+        assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "custom-opus-id"
+        assert env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "custom-sonnet-id"
+        assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "custom-haiku-id"
+
+    def test_bedrock_includes_common_env_vars(
+        self,
+        mock_cost_limits,
+        mock_pricing,
+        bedrock_credential,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("AWS_REGION", raising=False)
+        agent = self._make_bedrock_agent(
+            mock_cost_limits, mock_pricing, bedrock_credential
+        )
+        _, env = agent._prepare_runtime_execution("task")
+
+        assert env["FORCE_AUTO_BACKGROUND_TASKS"] == "1"
+        assert env["ENABLE_BACKGROUND_TASKS"] == "1"
+        assert env["DISABLE_AUTOUPDATER"] == "1"
+        assert env["DISABLE_NON_ESSENTIAL_MODEL_CALLS"] == "1"

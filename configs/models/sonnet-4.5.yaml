@@ -10,6 +10,7 @@ aliases:
   - sonnet-4.5
 provider_slugs:
   openrouter: anthropic/claude-sonnet-4.5
+  bedrock: us.anthropic.claude-sonnet-4-5-20250929-v1:0
 
 agent_specific:
   mini_swe:
