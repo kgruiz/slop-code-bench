@@ -46,6 +46,9 @@ APP = typer.Typer(
 CONSOLE = Console()
 DEFAULT_HTTP_TIMEOUT = 10.0
 GIT_BIN = shutil.which("git") or "git"
+DEFAULT_MANIFEST_PATH = (
+    Path(__file__).resolve().parents[1] / "configs" / "repos" / "repos.json"
+)
 
 
 class RepoEntry(BaseModel):
@@ -702,8 +705,14 @@ def analyze_manifest(
 @APP.command()
 def main(
     manifest: Annotated[
-        Path, typer.Option(..., exists=True, dir_okay=False)
-    ],
+        Path,
+        typer.Option(
+            DEFAULT_MANIFEST_PATH,
+            exists=True,
+            dir_okay=False,
+            help="Path to the repo analysis manifest JSON file.",
+        ),
+    ] = DEFAULT_MANIFEST_PATH,
     output_dir: Annotated[Path | None, typer.Option()] = None,
     seed: Annotated[int | None, typer.Option()] = None,
     no_cache: Annotated[
