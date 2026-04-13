@@ -1,0 +1,10 @@
+{
+  "default_sample_count": 3,
+  "seed": 42,
+  "repos": [
+    {
+      "name": "requests",
+      "url": "https://github.com/psf/requests.git"
+    }
+  ]
+}
