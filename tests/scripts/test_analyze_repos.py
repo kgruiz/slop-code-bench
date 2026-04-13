@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import httpx
+import pytest
+
+MODULE_PATH = (
+    Path(__file__).resolve().parents[2] / "scripts" / "analyze_repos.py"
+)
+SPEC = importlib.util.spec_from_file_location("analyze_repos_module", MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = MODULE
+SPEC.loader.exec_module(MODULE)
+
+
+def _run_git(*args: str, cwd: Path) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True)  # noqa: S603,S607
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, indent=2))
+
+
+@pytest.fixture
+def git_remote(tmp_path: Path) -> Path:
+    remote_dir = tmp_path / "remote.git"
+    work_dir = tmp_path / "work"
+
+    _run_git("init", "--bare", str(remote_dir), cwd=tmp_path)
+    _run_git("init", str(work_dir), cwd=tmp_path)
+    _run_git("config", "user.email", "test@example.com", cwd=work_dir)
+    _run_git("config", "user.name", "Test User", cwd=work_dir)
+
+    (work_dir / "README.md").write_text("notes\n")
+    _run_git("add", "README.md", cwd=work_dir)
+    _run_git("commit", "-m", "docs", cwd=work_dir)
+
+    (work_dir / "app.py").write_text("print('one')\n")
+    _run_git("add", "app.py", cwd=work_dir)
+    _run_git("commit", "-m", "python one", cwd=work_dir)
+
+    (work_dir / "notes.txt").write_text("ignore me\n")
+    _run_git("add", "notes.txt", cwd=work_dir)
+    _run_git("commit", "-m", "notes", cwd=work_dir)
+
+    (work_dir / "pkg").mkdir()
+    (work_dir / "pkg" / "core.py").write_text("def core():\n    return 2\n")
+    _run_git("add", "pkg/core.py", cwd=work_dir)
+    _run_git("commit", "-m", "python two", cwd=work_dir)
+
+    _run_git("remote", "add", "origin", str(remote_dir), cwd=work_dir)
+    _run_git("branch", "-M", "main", cwd=work_dir)
+    _run_git("push", "-u", "origin", "main", cwd=work_dir)
+
+    return remote_dir
+
+
+def test_load_manifest_parses_repo_defaults(tmp_path: Path):
+    manifest_path = tmp_path / "repos.json"
+    _write_json(
+        manifest_path,
+        {
+            "default_sample_count": 3,
+            "seed": 99,
+            "repos": [{"url": "https://github.com/org/repo.git"}],
+        },
+    )
+
+    manifest = MODULE.load_manifest(manifest_path)
+
+    assert manifest.default_sample_count == 3
+    assert manifest.seed == 99
+    assert manifest.repos[0].url == "https://github.com/org/repo.git"
+
+
+def test_parse_github_repo_supports_https_and_ssh():
+    assert MODULE.parse_github_repo("https://github.com/openai/codex.git") == (
+        "openai",
+        "codex",
+    )
+    assert MODULE.parse_github_repo("git@github.com:openai/codex.git") == (
+        "openai",
+        "codex",
+    )
+    assert MODULE.parse_github_repo("https://gitlab.com/openai/codex.git") is None
+
+
+def test_fetch_github_stars_returns_none_on_http_failure(monkeypatch: pytest.MonkeyPatch):
+    class FakeClient:
+        def get(self, *args, **kwargs):
+            raise httpx.ConnectError("boom")
+
+    stars = MODULE.fetch_github_stars(
+        "https://github.com/openai/codex",
+        client=FakeClient(),
+    )
+
+    assert stars is None
+
+
+def test_list_commit_candidates_only_includes_source_touching(git_remote: Path, tmp_path: Path):
+    cache_dir = tmp_path / "cache"
+    repo = MODULE.clone_or_update_repo(str(git_remote), cache_dir / "sample", refresh=False)
+    branch = MODULE.resolve_branch_name(repo, None, None)
+
+    candidates = MODULE.list_commit_candidates(
+        repo,
+        branch,
+        {".py"},
+        [],
+        [],
+    )
+
+    shas = [candidate.sha for candidate in candidates]
+    assert len(candidates) == 2
+    assert len(set(shas)) == 2
+
+
+def test_select_commits_is_deterministic():
+    candidates = [
+        MODULE.CommitCandidate(sha=f"sha-{index}", committed_at=f"2025-01-0{index}T00:00:00+00:00")
+        for index in range(1, 6)
+    ]
+
+    first = MODULE.select_commits(
+        candidates,
+        sample_count=3,
+        seed=7,
+        pinned_refs=[],
+    )
+    second = MODULE.select_commits(
+        candidates,
+        sample_count=3,
+        seed=7,
+        pinned_refs=[],
+    )
+
+    assert [item.sha for item in first] == [item.sha for item in second]
+
+
+def test_analyze_manifest_writes_quality_outputs_and_summary(
+    git_remote: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest_path = tmp_path / "repos.json"
+    output_dir = tmp_path / "out"
+    _write_json(
+        manifest_path,
+        {
+            "default_sample_count": 2,
+            "seed": 123,
+            "output_dir": str(output_dir),
+            "repos": [
+                {
+                    "name": "sample-repo",
+                    "url": str(git_remote),
+                }
+            ],
+        },
+    )
+
+    monkeypatch.setattr(MODULE, "fetch_github_stars", lambda *args, **kwargs: 42)
+
+    def fake_run_metrics(snapshot_dir: Path, entry_file: Path) -> dict[str, float | int]:
+        quality_dir = snapshot_dir / "quality_analysis"
+        quality_dir.mkdir(parents=True, exist_ok=True)
+        (quality_dir / "overall_quality.json").write_text("{}")
+        (quality_dir / "files.jsonl").write_text("")
+        (quality_dir / "symbols.jsonl").write_text("")
+        (quality_dir / "ast_grep.jsonl").write_text("")
+        return {
+            "file_count": 2,
+            "loc": 20,
+            "violation_pct": 0.1,
+            "ast_grep_violations": 3,
+            "ast_grep_rules_checked": 7,
+            "clone_ratio": 0.05,
+            "verbosity": 0.15,
+            "erosion": 0.25,
+        }
+
+    monkeypatch.setattr(MODULE, "run_metrics_for_snapshot", fake_run_metrics)
+
+    rows = MODULE.analyze_manifest(manifest_path)
+
+    ok_rows = [row for row in rows if row.status == "ok"]
+    assert len(ok_rows) == 2
+    assert all(row.stars == 42 for row in ok_rows)
+    assert (output_dir / "summary.json").exists()
+    assert (output_dir / "summary.csv").exists()
+
+    for row in ok_rows:
+        assert row.snapshot_path is not None
+        quality_dir = Path(row.snapshot_path) / "quality_analysis"
+        assert (quality_dir / "overall_quality.json").exists()
+        assert (quality_dir / "files.jsonl").exists()
+        assert (quality_dir / "symbols.jsonl").exists()
+        assert (quality_dir / "ast_grep.jsonl").exists()
+
+
+def test_analyze_manifest_records_repo_failure(tmp_path: Path):
+    manifest_path = tmp_path / "repos.json"
+    _write_json(
+        manifest_path,
+        {
+            "repos": [
+                {
+                    "name": "broken",
+                    "url": "https://example.invalid/not-a-repo.git",
+                }
+            ]
+        },
+    )
+
+    rows = MODULE.analyze_manifest(manifest_path, output_dir=tmp_path / "out")
+
+    assert len(rows) == 1
+    assert rows[0].status == "repo_failed"
+
+
+def test_discover_entry_file_prefers_explicit_path(tmp_path: Path):
+    (tmp_path / "main.py").write_text("print('x')\n")
+    (tmp_path / "other.py").write_text("print('y')\n")
+
+    entry = MODULE.discover_entry_file(tmp_path, {".py"}, "other.py")
+
+    assert entry.name == "other.py"
