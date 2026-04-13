@@ -707,7 +707,7 @@ def main(
     manifest: Annotated[
         Path,
         typer.Option(
-            DEFAULT_MANIFEST_PATH,
+            "--manifest",
             exists=True,
             dir_okay=False,
             help="Path to the repo analysis manifest JSON file.",
