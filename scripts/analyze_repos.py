@@ -194,6 +194,52 @@ def parse_github_repo(url: str) -> tuple[str, str] | None:
     return owner, repo_name
 
 
+def canonical_repo_identity(repo_url: str) -> str:
+    """Return a stable identity string for cache-collision checks."""
+
+    if github_id := parse_github_repo(repo_url):
+        owner, repo_name = github_id
+        return f"github:{owner.lower()}/{repo_name.lower()}"
+
+    parsed = urlparse(repo_url)
+    if parsed.scheme and parsed.netloc:
+        path = parsed.path.rstrip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        return f"url:{parsed.scheme.lower()}://{parsed.netloc.lower()}{path}"
+
+    path = Path(repo_url).expanduser()
+    try:
+        return f"path:{path.resolve()}"
+    except OSError:
+        return f"path:{path}"
+
+
+def validate_cache_repo_targets(
+    repos: list[RepoEntry],
+    cache_dir: Path,
+) -> None:
+    """Fail if different repos would reuse the same persistent cache path."""
+
+    cache_targets: dict[Path, str] = {}
+    for repo in repos:
+        repo_key = derive_repo_key(repo)
+        cache_repo_path = cache_dir / repo_key
+        repo_identity = canonical_repo_identity(repo.url)
+        existing_identity = cache_targets.get(cache_repo_path)
+        if existing_identity is None:
+            cache_targets[cache_repo_path] = repo_identity
+            continue
+
+        if existing_identity != repo_identity:
+            raise ValueError(
+                "Cache directory collision detected: "
+                f"{cache_repo_path} would be reused for different repos "
+                f"({existing_identity} vs {repo_identity}). "
+                "Set distinct manifest names to avoid the collision."
+            )
+
+
 def fetch_github_stars(
     repo_url: str,
     client: httpx.Client | None = None,
@@ -528,6 +574,9 @@ def analyze_manifest(
         repos = [
             repo for repo in repos if (repo.name or derive_repo_key(repo)) == repo_name
         ]
+
+    if not no_cache:
+        validate_cache_repo_targets(repos, cache_dir)
 
     with ExitStack() as exit_stack:
         http_client = exit_stack.enter_context(

@@ -104,6 +104,37 @@ def test_fetch_github_stars_returns_none_on_http_failure(monkeypatch: pytest.Mon
     assert stars is None
 
 
+def test_validate_cache_repo_targets_allows_same_repo_same_cache_path(tmp_path: Path):
+    repos = [
+        MODULE.RepoEntry(
+            name="same",
+            url="https://github.com/psf/requests.git",
+        ),
+        MODULE.RepoEntry(
+            name="same",
+            url="git@github.com:psf/requests.git",
+        ),
+    ]
+
+    MODULE.validate_cache_repo_targets(repos, tmp_path / "cache")
+
+
+def test_validate_cache_repo_targets_rejects_different_repo_collision(tmp_path: Path):
+    repos = [
+        MODULE.RepoEntry(
+            name="same",
+            url="https://github.com/psf/requests.git",
+        ),
+        MODULE.RepoEntry(
+            name="same",
+            url="https://github.com/pallets/flask.git",
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="Cache directory collision detected"):
+        MODULE.validate_cache_repo_targets(repos, tmp_path / "cache")
+
+
 def test_list_commit_candidates_only_includes_source_touching(git_remote: Path, tmp_path: Path):
     cache_dir = tmp_path / "cache"
     repo, _repo_state = MODULE.clone_or_update_repo(
