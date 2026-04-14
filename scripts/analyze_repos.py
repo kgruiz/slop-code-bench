@@ -442,6 +442,7 @@ def discover_entry_file(
 def run_metrics_for_snapshot(
     snapshot_dir: Path,
     entry_file: Path,
+    artifact_dir: Path,
 ) -> dict[str, int | float]:
     """Run snapshot quality metrics and save the standard artifacts."""
 
@@ -451,9 +452,9 @@ def run_metrics_for_snapshot(
         quality_result, file_metrics = measure_snapshot_quality(
             relative_entry_file, snapshot_dir
         )
-    save_quality_metrics(snapshot_dir, quality_result, file_metrics)
+    save_quality_metrics(artifact_dir, quality_result, file_metrics)
 
-    flat_metrics = get_quality_metrics(snapshot_dir)
+    flat_metrics = get_quality_metrics(artifact_dir)
     verbosity = compute_checkpoint_verbosity(flat_metrics)
     erosion = compute_checkpoint_erosion(flat_metrics)
 
@@ -530,6 +531,9 @@ def analyze_manifest(
     with ExitStack() as exit_stack:
         http_client = exit_stack.enter_context(
             httpx.Client(timeout=DEFAULT_HTTP_TIMEOUT)
+        )
+        workspace_root = Path(
+            exit_stack.enter_context(tempfile.TemporaryDirectory())
         )
 
         for repo in repos:
@@ -641,8 +645,11 @@ def analyze_manifest(
                 f"[bold]{branch_name}[/bold]"
             )
             for index, candidate in enumerate(selected, start=1):
+                artifact_dir = repo_output_dir / f"{index:03d}-{candidate.sha[:8]}"
                 snapshot_dir = (
-                    repo_output_dir / f"{index:03d}-{candidate.sha[:8]}"
+                    workspace_root
+                    / repo_key
+                    / f"{index:03d}-{candidate.sha[:8]}"
                 )
                 CONSOLE.print(
                     f"[cyan]{repo_key}[/cyan]: commit {index}/{len(selected)} "
@@ -662,6 +669,7 @@ def analyze_manifest(
                     metric_summary = run_metrics_for_snapshot(
                         snapshot_dir,
                         entry_path,
+                        artifact_dir,
                     )
                     rows.append(
                         CommitSummaryRow(
@@ -676,7 +684,7 @@ def analyze_manifest(
                             resolved_entry_file=str(
                                 entry_path.relative_to(snapshot_dir)
                             ),
-                            snapshot_path=str(snapshot_dir),
+                            snapshot_path=str(artifact_dir),
                             file_count=int(metric_summary["file_count"]),
                             loc=int(metric_summary["loc"]),
                             violation_pct=float(metric_summary["violation_pct"]),
@@ -695,7 +703,7 @@ def analyze_manifest(
                     )
                     CONSOLE.print(
                         f"[green]{repo_key}[/green]: completed {candidate.sha[:8]} -> "
-                        f"{snapshot_dir}"
+                        f"{artifact_dir}"
                     )
                 except Exception as error:  # noqa: BLE001
                     CONSOLE.print(
@@ -712,7 +720,7 @@ def analyze_manifest(
                             commit_timestamp=candidate.committed_at,
                             sample_ordinal=index,
                             resolved_entry_file=None,
-                            snapshot_path=str(snapshot_dir),
+                            snapshot_path=str(artifact_dir),
                             file_count=None,
                             loc=None,
                             violation_pct=None,

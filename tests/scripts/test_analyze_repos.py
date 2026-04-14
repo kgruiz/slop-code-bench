@@ -168,8 +168,12 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
 
     monkeypatch.setattr(MODULE, "fetch_github_stars", lambda *args, **kwargs: 42)
 
-    def fake_run_metrics(snapshot_dir: Path, entry_file: Path) -> dict[str, float | int]:
-        quality_dir = snapshot_dir / "quality_analysis"
+    def fake_run_metrics(
+        snapshot_dir: Path,
+        entry_file: Path,
+        artifact_dir: Path,
+    ) -> dict[str, float | int]:
+        quality_dir = artifact_dir / "quality_analysis"
         quality_dir.mkdir(parents=True, exist_ok=True)
         (quality_dir / "overall_quality.json").write_text("{}")
         (quality_dir / "files.jsonl").write_text("")
@@ -198,6 +202,7 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
 
     for row in ok_rows:
         assert row.snapshot_path is not None
+        assert str(output_dir) in row.snapshot_path
         quality_dir = Path(row.snapshot_path) / "quality_analysis"
         assert (quality_dir / "overall_quality.json").exists()
         assert (quality_dir / "files.jsonl").exists()
@@ -239,6 +244,7 @@ def test_run_metrics_for_snapshot_passes_entry_file_relative_to_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ):
     snapshot_dir = tmp_path / "snapshot"
+    artifact_dir = tmp_path / "artifacts"
     entry_file = snapshot_dir / "pkg" / "core.py"
     entry_file.parent.mkdir(parents=True)
     entry_file.write_text("def core():\n    return 1\n")
@@ -258,12 +264,16 @@ def test_run_metrics_for_snapshot_passes_entry_file_relative_to_snapshot(
         return _FakeQualityResult(), []
 
     monkeypatch.setattr(MODULE, "measure_snapshot_quality", fake_measure_snapshot_quality)
-    monkeypatch.setattr(MODULE, "save_quality_metrics", lambda *args, **kwargs: None)
+    def fake_save_quality_metrics(output_arg, *_args, **_kwargs):
+        captured["output_arg"] = output_arg
+
+    monkeypatch.setattr(MODULE, "save_quality_metrics", fake_save_quality_metrics)
     monkeypatch.setattr(MODULE, "get_quality_metrics", lambda *args, **kwargs: {})
     monkeypatch.setattr(MODULE, "compute_checkpoint_verbosity", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(MODULE, "compute_checkpoint_erosion", lambda *args, **kwargs: 0.0)
 
-    MODULE.run_metrics_for_snapshot(snapshot_dir, entry_file)
+    MODULE.run_metrics_for_snapshot(snapshot_dir, entry_file, artifact_dir)
 
     assert captured["snapshot_arg"] == snapshot_dir
     assert captured["entry_arg"] == Path("pkg/core.py")
+    assert captured["output_arg"] == artifact_dir
