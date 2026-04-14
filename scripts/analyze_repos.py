@@ -45,6 +45,7 @@ from slop_code.metrics import measure_snapshot_quality
 from slop_code.metrics.checkpoint import compute_checkpoint_erosion
 from slop_code.metrics.checkpoint import compute_checkpoint_verbosity
 from slop_code.metrics.checkpoint import get_quality_metrics
+from slop_code.metrics.languages.python.ast_grep import _get_ast_grep_binary
 from slop_code.metrics.languages.registry import EXT_TO_LANGUAGE
 from slop_code.metrics.quality_io import save_quality_metrics
 
@@ -584,6 +585,16 @@ def analyze_manifest(
 
     if not no_cache:
         validate_cache_repo_targets(repos, cache_dir)
+
+    ast_grep_bin = _get_ast_grep_binary()
+    if ast_grep_bin is None:
+        CONSOLE.print(
+            "[yellow]ast-grep[/yellow]: not found; AST-grep rule checks will be skipped"
+        )
+    else:
+        CONSOLE.print(
+            f"[cyan]ast-grep[/cyan]: using [bold]{ast_grep_bin}[/bold]"
+        )
 
     with ExitStack() as exit_stack:
         http_client = exit_stack.enter_context(
