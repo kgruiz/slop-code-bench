@@ -27,9 +27,44 @@ AST_GREP_RULES_PATH = Path(__file__).parents[5] / "configs" / "slop_rules.yaml"
 AST_GREP_RULES_DIR = AST_GREP_RULES_PATH
 
 
+def _is_ast_grep_binary(binary: str) -> bool:
+    """Return whether a binary resolves to the ast-grep CLI."""
+
+    try:
+        result = subprocess.run(  # noqa: S603
+            [binary, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+
+    output = f"{result.stdout}\n{result.stderr}".lower()
+    return "ast-grep" in output
+
+
+def _get_ast_grep_binary() -> str | None:
+    """Resolve the ast-grep CLI safely across platforms."""
+
+    override = os.environ.get("AST_GREP_BIN")
+    if override:
+        return override if _is_ast_grep_binary(override) else None
+
+    ast_grep = shutil.which("ast-grep")
+    if ast_grep and _is_ast_grep_binary(ast_grep):
+        return ast_grep
+
+    sg = shutil.which("sg")
+    if sg and _is_ast_grep_binary(sg):
+        return sg
+
+    return None
+
+
 def _is_sg_available() -> bool:
-    """Check if ast-grep (sg) is available on the system."""
-    return shutil.which("sg") is not None
+    """Check if an ast-grep CLI is available on the system."""
+    return _get_ast_grep_binary() is not None
 
 
 def _get_ast_grep_rules_path() -> Path:
@@ -72,11 +107,12 @@ def calculate_ast_grep_metrics(source: Path) -> AstGrepMetrics:
         source: Path to the Python source file.
 
     Returns:
-        AstGrepMetrics with violations found, or empty metrics if sg
-        unavailable.
+        AstGrepMetrics with violations found, or empty metrics if ast-grep
+        is unavailable.
     """
-    if not _is_sg_available():
-        logger.debug("ast-grep (sg) not available, skipping ast-grep metrics")
+    ast_grep_bin = _get_ast_grep_binary()
+    if ast_grep_bin is None:
+        logger.debug("ast-grep not available, skipping ast-grep metrics")
         return AstGrepMetrics(
             violations=[], total_violations=0, counts={}, rules_checked=0
         )
@@ -106,9 +142,9 @@ def calculate_ast_grep_metrics(source: Path) -> AstGrepMetrics:
     counts: Counter[str] = Counter()
     logger.debug("Running ast-grep rules", rules_path=str(rules_path))
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             [
-                "sg",
+                ast_grep_bin,
                 "scan",
                 "--json=stream",
                 "-r",

@@ -7,7 +7,6 @@ Tests all functions in slop_code.metrics.languages.python.ast_grep including:
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -20,6 +19,8 @@ from slop_code.metrics.languages.python import _get_ast_grep_rules_dir
 from slop_code.metrics.languages.python import _get_ast_grep_rules_path
 from slop_code.metrics.languages.python import _is_sg_available
 from slop_code.metrics.languages.python import calculate_ast_grep_metrics
+from slop_code.metrics.languages.python.ast_grep import _get_ast_grep_binary
+from slop_code.metrics.languages.python.ast_grep import _is_ast_grep_binary
 from slop_code.metrics.languages.python.ast_grep import (
     build_ast_grep_rules_lookup,
 )
@@ -42,13 +43,90 @@ def _write(tmp_path: Path, name: str, content: str) -> Path:
 class TestSgAvailability:
     """Tests for _is_sg_available."""
 
-    def test_sg_available_when_installed(self) -> None:
-        with patch("shutil.which", return_value="/usr/bin/sg"):
+    def test_sg_available_when_ast_grep_binary_exists(self) -> None:
+        with patch(
+            "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+            return_value="/usr/local/bin/ast-grep",
+        ):
             assert _is_sg_available() is True
 
-    def test_sg_unavailable_when_not_installed(self) -> None:
-        with patch("shutil.which", return_value=None):
+    def test_sg_unavailable_when_ast_grep_missing(self) -> None:
+        with patch(
+            "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+            return_value=None,
+        ):
             assert _is_sg_available() is False
+
+
+class TestAstGrepBinaryResolution:
+    """Tests for ast-grep binary resolution."""
+
+    def test_is_ast_grep_binary_true_for_ast_grep_version_output(self) -> None:
+        with patch(
+            "slop_code.metrics.languages.python.ast_grep.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="ast-grep 0.39.0\n",
+                stderr="",
+                returncode=0,
+            )
+            assert _is_ast_grep_binary("/usr/local/bin/ast-grep") is True
+
+    def test_is_ast_grep_binary_false_for_util_linux_sg(self) -> None:
+        with patch(
+            "slop_code.metrics.languages.python.ast_grep.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="sg from util-linux 2.41\n",
+                stderr="",
+                returncode=0,
+            )
+            assert _is_ast_grep_binary("/usr/bin/sg") is False
+
+    def test_get_ast_grep_binary_prefers_ast_grep(self) -> None:
+        def fake_which(name: str) -> str | None:
+            if name == "ast-grep":
+                return "/home/test/.local/bin/ast-grep"
+            if name == "sg":
+                return "/usr/bin/sg"
+            return None
+
+        def fake_is_ast_grep(binary: str) -> bool:
+            return binary == "/home/test/.local/bin/ast-grep"
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "slop_code.metrics.languages.python.ast_grep.shutil.which",
+                side_effect=fake_which,
+            ),
+            patch(
+                "slop_code.metrics.languages.python.ast_grep._is_ast_grep_binary",
+                side_effect=fake_is_ast_grep,
+            ),
+        ):
+            assert (
+                _get_ast_grep_binary() == "/home/test/.local/bin/ast-grep"
+            )
+
+    def test_get_ast_grep_binary_ignores_util_linux_sg(self) -> None:
+        def fake_which(name: str) -> str | None:
+            if name == "sg":
+                return "/usr/bin/sg"
+            return None
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "slop_code.metrics.languages.python.ast_grep.shutil.which",
+                side_effect=fake_which,
+            ),
+            patch(
+                "slop_code.metrics.languages.python.ast_grep._is_ast_grep_binary",
+                return_value=False,
+            ),
+        ):
+            assert _get_ast_grep_binary() is None
 
 
 # =============================================================================
@@ -123,7 +201,7 @@ class TestCalculateAstGrepMetrics:
     def test_returns_empty_when_sg_unavailable(self, tmp_path: Path) -> None:
         source = _write(tmp_path, "test.py", "x = 1")
         with patch(
-            "slop_code.metrics.languages.python.ast_grep.shutil.which",
+            "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
             return_value=None,
         ):
             result = calculate_ast_grep_metrics(source)
@@ -137,8 +215,8 @@ class TestCalculateAstGrepMetrics:
         source = _write(tmp_path, "test.py", "x = 1")
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict(
                 "os.environ", {"AST_GREP_RULES_PATH": "/nonexistent.yaml"}
@@ -156,8 +234,8 @@ class TestCalculateAstGrepMetrics:
 
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
         ):
@@ -199,8 +277,8 @@ def bad():
 
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
@@ -241,8 +319,8 @@ def bad():
 
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
@@ -288,8 +366,8 @@ def bad():
 
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
@@ -316,8 +394,8 @@ def bad():
 
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
@@ -337,8 +415,8 @@ def bad():
 
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
@@ -366,8 +444,8 @@ def bad():
 
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
@@ -390,8 +468,8 @@ def bad():
 
         with (
             patch(
-                "slop_code.metrics.languages.python.ast_grep.shutil.which",
-                return_value="/usr/bin/sg",
+                "slop_code.metrics.languages.python.ast_grep._get_ast_grep_binary",
+                return_value="/usr/local/bin/ast-grep",
             ),
             patch.dict("os.environ", {"AST_GREP_RULES_PATH": str(rules_path)}),
             patch(
@@ -503,7 +581,7 @@ class TestAstGrepMetricsIntegration:
     """Integration tests that use actual ast-grep if available."""
 
     @pytest.mark.skipif(
-        not shutil.which("sg"), reason="ast-grep (sg) not installed"
+        _get_ast_grep_binary() is None, reason="ast-grep not installed"
     )
     def test_real_sg_scan_with_clean_code(self, tmp_path: Path) -> None:
         """Test with actual ast-grep scanning on clean code."""
@@ -522,7 +600,7 @@ def greet(name: str) -> str:
         assert result.rules_checked > 0
 
     @pytest.mark.skipif(
-        not shutil.which("sg"), reason="ast-grep (sg) not installed"
+        _get_ast_grep_binary() is None, reason="ast-grep not installed"
     )
     def test_real_sg_scan_with_bad_code(self, tmp_path: Path) -> None:
         """Test with actual ast-grep scanning on code with bad patterns."""
