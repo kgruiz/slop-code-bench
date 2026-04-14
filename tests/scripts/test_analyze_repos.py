@@ -79,6 +79,30 @@ def test_load_manifest_parses_repo_defaults(tmp_path: Path):
     assert manifest.repos[0].url == "https://github.com/org/repo.git"
 
 
+def test_load_manifest_accepts_stars_note_and_null_url(tmp_path: Path):
+    manifest_path = tmp_path / "repos.json"
+    _write_json(
+        manifest_path,
+        {
+            "repos": [
+                {
+                    "name": "python-projects",
+                    "stars": "2.1k",
+                    "url": None,
+                    "note": "multiple repos with this name",
+                }
+            ]
+        },
+    )
+
+    manifest = MODULE.load_manifest(manifest_path)
+
+    assert manifest.repos[0].name == "python-projects"
+    assert manifest.repos[0].stars == "2.1k"
+    assert manifest.repos[0].url is None
+    assert manifest.repos[0].note == "multiple repos with this name"
+
+
 def test_parse_github_repo_supports_https_and_ssh():
     assert MODULE.parse_github_repo("https://github.com/openai/codex.git") == (
         "openai",
@@ -133,6 +157,27 @@ def test_validate_cache_repo_targets_rejects_different_repo_collision(tmp_path: 
 
     with pytest.raises(ValueError, match="Cache directory collision detected"):
         MODULE.validate_cache_repo_targets(repos, tmp_path / "cache")
+
+
+def test_validate_cache_repo_targets_ignores_missing_urls(tmp_path: Path):
+    repos = [
+        MODULE.RepoEntry(
+            name="missing",
+            url=None,
+            stars="2.1k",
+            note="missing URL",
+        ),
+        MODULE.RepoEntry(
+            name="same",
+            url="https://github.com/psf/requests.git",
+        ),
+        MODULE.RepoEntry(
+            name="same",
+            url="git@github.com:psf/requests.git",
+        ),
+    ]
+
+    MODULE.validate_cache_repo_targets(repos, tmp_path / "cache")
 
 
 def test_list_commit_candidates_only_includes_source_touching(git_remote: Path, tmp_path: Path):
@@ -201,7 +246,7 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
         },
     )
 
-    monkeypatch.setattr(MODULE, "fetch_github_stars", lambda *args, **kwargs: 42)
+    monkeypatch.setattr(MODULE, "fetch_github_stars", lambda *args, **kwargs: "42")
 
     def fake_run_metrics(
         snapshot_dir: Path,
@@ -231,7 +276,7 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
 
     ok_rows = [row for row in rows if row.status == "ok"]
     assert len(ok_rows) == 2
-    assert all(row.stars == 42 for row in ok_rows)
+    assert all(row.stars == "42" for row in ok_rows)
     assert (output_dir / "summary.json").exists()
     assert (output_dir / "summary.csv").exists()
 
@@ -263,6 +308,92 @@ def test_analyze_manifest_records_repo_failure(tmp_path: Path):
 
     assert len(rows) == 1
     assert rows[0].status == "repo_failed"
+
+
+def test_analyze_manifest_skips_missing_url_entry(tmp_path: Path):
+    manifest_path = tmp_path / "repos.json"
+    _write_json(
+        manifest_path,
+        {
+            "repos": [
+                {
+                    "name": "python-projects",
+                    "stars": "2.1k",
+                    "url": None,
+                    "note": "multiple repos with this name",
+                }
+            ]
+        },
+    )
+
+    rows = MODULE.analyze_manifest(manifest_path, output_dir=tmp_path / "out")
+
+    assert len(rows) == 1
+    assert rows[0].status == "skipped"
+    assert rows[0].repo_url is None
+    assert rows[0].stars == "2.1k"
+    assert rows[0].note == "multiple repos with this name"
+    assert rows[0].error == "No URL configured."
+
+
+def test_analyze_manifest_prefers_manifest_stars_over_lookup(
+    git_remote: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest_path = tmp_path / "repos.json"
+    output_dir = tmp_path / "out"
+    _write_json(
+        manifest_path,
+        {
+            "default_sample_count": 1,
+            "output_dir": str(output_dir),
+            "repos": [
+                {
+                    "name": "sample-repo",
+                    "url": str(git_remote),
+                    "stars": "11.3k",
+                    "note": "from paper",
+                }
+            ],
+        },
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("star lookup should not be called")
+
+    monkeypatch.setattr(MODULE, "fetch_github_stars", fail_fetch)
+
+    def fake_run_metrics(
+        snapshot_dir: Path,
+        entry_file: Path,
+        artifact_dir: Path,
+    ) -> dict[str, float | int]:
+        quality_dir = artifact_dir / "quality_analysis"
+        quality_dir.mkdir(parents=True, exist_ok=True)
+        (quality_dir / "overall_quality.json").write_text("{}")
+        (quality_dir / "files.jsonl").write_text("")
+        (quality_dir / "symbols.jsonl").write_text("")
+        (quality_dir / "ast_grep.jsonl").write_text("")
+        return {
+            "file_count": 1,
+            "loc": 10,
+            "violation_pct": 0.0,
+            "ast_grep_violations": 0,
+            "ast_grep_rules_checked": 1,
+            "clone_ratio": 0.0,
+            "verbosity": 0.0,
+            "erosion": 0.0,
+        }
+
+    monkeypatch.setattr(MODULE, "run_metrics_for_snapshot", fake_run_metrics)
+
+    rows = MODULE.analyze_manifest(manifest_path)
+
+    assert len(rows) == 1
+    assert rows[0].status == "ok"
+    assert rows[0].stars == "11.3k"
+    assert rows[0].note == "from paper"
 
 
 def test_discover_entry_file_prefers_explicit_path(tmp_path: Path):

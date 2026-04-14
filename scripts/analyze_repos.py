@@ -64,8 +64,10 @@ class RepoEntry(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    url: str
+    url: str | None
     name: str | None = None
+    stars: str | None = None
+    note: str | None = None
     branch: str | None = None
     sample_count: int | None = Field(default=None, ge=1)
     include_globs: list[str] = Field(default_factory=list)
@@ -101,9 +103,10 @@ class CommitSummaryRow:
     """Summary row for one sampled commit or one repo-level failure."""
 
     repo_key: str
-    repo_url: str
+    repo_url: str | None
     branch: str | None
-    stars: int | None
+    stars: str | None
+    note: str | None
     commit_sha: str | None
     commit_short_sha: str | None
     commit_timestamp: str | None
@@ -147,16 +150,17 @@ def derive_repo_key(repo: RepoEntry) -> str:
     if repo.name:
         return sanitize_name(repo.name)
 
-    if github_id := parse_github_repo(repo.url):
+    if repo.url and (github_id := parse_github_repo(repo.url)):
         owner, name = github_id
         return sanitize_name(f"{owner}-{name}")
 
-    parsed = urlparse(repo.url)
-    if parsed.path:
-        raw = Path(parsed.path).stem or Path(parsed.path).name
-        return sanitize_name(raw)
+    if repo.url:
+        parsed = urlparse(repo.url)
+        if parsed.path:
+            raw = Path(parsed.path).stem or Path(parsed.path).name
+            return sanitize_name(raw)
 
-    return sanitize_name(repo.url)
+    return sanitize_name(repo.name or "repo")
 
 
 def sanitize_name(value: str) -> str:
@@ -223,6 +227,9 @@ def validate_cache_repo_targets(
 
     cache_targets: dict[Path, str] = {}
     for repo in repos:
+        if not repo.url:
+            continue
+
         repo_key = derive_repo_key(repo)
         cache_repo_path = cache_dir / repo_key
         repo_identity = canonical_repo_identity(repo.url)
@@ -243,7 +250,7 @@ def validate_cache_repo_targets(
 def fetch_github_stars(
     repo_url: str,
     client: httpx.Client | None = None,
-) -> int | None:
+) -> str | None:
     """Fetch current GitHub stars without requiring authentication."""
 
     parsed = parse_github_repo(repo_url)
@@ -270,7 +277,7 @@ def fetch_github_stars(
         return None
 
     stars = response.json().get("stargazers_count")
-    return stars if isinstance(stars, int) else None
+    return str(stars) if isinstance(stars, int) else None
 
 
 def clone_or_update_repo(
@@ -591,14 +598,47 @@ def analyze_manifest(
             repo_seed = seed if seed is not None else manifest.seed
             sample_count = repo.sample_count or manifest.default_sample_count
             repo_output_dir = effective_output_dir / repo_key
+            stars = repo.stars
+            if repo.url is None:
+                CONSOLE.print(
+                    f"[yellow]{repo_key}[/yellow]: no URL configured, skipping"
+                )
+                rows.append(
+                    CommitSummaryRow(
+                        repo_key=repo_key,
+                        repo_url=None,
+                        branch=repo.branch or manifest.default_branch,
+                        stars=stars,
+                        note=repo.note,
+                        commit_sha=None,
+                        commit_short_sha=None,
+                        commit_timestamp=None,
+                        sample_ordinal=None,
+                        resolved_entry_file=None,
+                        snapshot_path=None,
+                        file_count=None,
+                        loc=None,
+                        violation_pct=None,
+                        ast_grep_violations=None,
+                        ast_grep_rules_checked=None,
+                        clone_ratio=None,
+                        verbosity=None,
+                        erosion=None,
+                        status="skipped",
+                        error="No URL configured.",
+                    )
+                )
+                continue
+
             repo_output_dir.mkdir(parents=True, exist_ok=True)
             CONSOLE.print(f"[cyan]{repo_key}[/cyan]: preparing repository")
 
-            stars = fetch_github_stars(repo.url, client=http_client)
-            if parse_github_repo(repo.url) and stars is None:
-                CONSOLE.print(
-                    f"[yellow]{repo_key}: could not fetch GitHub stars; continuing.[/yellow]"
-                )
+            if stars is None:
+                stars = fetch_github_stars(repo.url, client=http_client)
+                if parse_github_repo(repo.url) and stars is None:
+                    CONSOLE.print(
+                        f"[yellow]{repo_key}: could not fetch GitHub stars; continuing.[/yellow]"
+                    )
 
             try:
                 if no_cache:
@@ -680,6 +720,7 @@ def analyze_manifest(
                         repo_url=repo.url,
                         branch=repo.branch or manifest.default_branch,
                         stars=stars,
+                        note=repo.note,
                         commit_sha=None,
                         commit_short_sha=None,
                         commit_timestamp=None,
@@ -710,6 +751,7 @@ def analyze_manifest(
                         repo_url=repo.url,
                         branch=branch_name,
                         stars=stars,
+                        note=repo.note,
                         commit_sha=None,
                         commit_short_sha=None,
                         commit_timestamp=None,
@@ -766,6 +808,7 @@ def analyze_manifest(
                         repo_url=repo.url,
                         branch=branch_name,
                         stars=stars,
+                        note=repo.note,
                         commit_sha=candidate.sha,
                         commit_short_sha=candidate.sha[:8],
                         commit_timestamp=candidate.committed_at,
@@ -804,6 +847,7 @@ def analyze_manifest(
                             repo_url=repo.url,
                             branch=branch_name,
                             stars=stars,
+                            note=repo.note,
                             commit_sha=candidate.sha,
                             commit_short_sha=candidate.sha[:8],
                             commit_timestamp=candidate.committed_at,
