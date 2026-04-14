@@ -604,15 +604,17 @@ def analyze_manifest(
             exit_stack.enter_context(tempfile.TemporaryDirectory())
         )
 
-        for repo in repos:
+        total_repos = len(repos)
+        for repo_index, repo in enumerate(repos, start=1):
             repo_key = derive_repo_key(repo)
+            repo_label = f"[{repo_index}/{total_repos}] {repo_key}"
             repo_seed = seed if seed is not None else manifest.seed
             sample_count = repo.sample_count or manifest.default_sample_count
             repo_output_dir = effective_output_dir / repo_key
             stars = repo.stars
             if repo.url is None:
                 CONSOLE.print(
-                    f"[yellow]{repo_key}[/yellow]: no URL configured, skipping"
+                    f"[yellow]{repo_label}[/yellow]: no URL configured, skipping"
                 )
                 rows.append(
                     CommitSummaryRow(
@@ -642,13 +644,13 @@ def analyze_manifest(
                 continue
 
             repo_output_dir.mkdir(parents=True, exist_ok=True)
-            CONSOLE.print(f"[cyan]{repo_key}[/cyan]: preparing repository")
+            CONSOLE.print(f"[cyan]{repo_label}[/cyan]: preparing repository")
 
             if stars is None:
                 stars = fetch_github_stars(repo.url, client=http_client)
                 if parse_github_repo(repo.url) and stars is None:
                     CONSOLE.print(
-                        f"[yellow]{repo_key}: could not fetch GitHub stars; continuing.[/yellow]"
+                        f"[yellow]{repo_label}: could not fetch GitHub stars; continuing.[/yellow]"
                     )
 
             try:
@@ -656,22 +658,22 @@ def analyze_manifest(
                     temp_dir = Path(exit_stack.enter_context(tempfile.TemporaryDirectory()))
                     cache_repo_path = temp_dir / repo_key
                     CONSOLE.print(
-                        f"[cyan]{repo_key}[/cyan]: cloning temporary repository"
+                        f"[cyan]{repo_label}[/cyan]: cloning temporary repository"
                     )
                 else:
                     cache_repo_path = cache_dir / repo_key
                     if cache_repo_path.exists():
                         if refresh:
                             CONSOLE.print(
-                                f"[cyan]{repo_key}[/cyan]: refreshing cached repository"
+                                f"[cyan]{repo_label}[/cyan]: refreshing cached repository"
                             )
                         else:
                             CONSOLE.print(
-                                f"[cyan]{repo_key}[/cyan]: reusing cached repository"
+                                f"[cyan]{repo_label}[/cyan]: reusing cached repository"
                             )
                     else:
                         CONSOLE.print(
-                            f"[cyan]{repo_key}[/cyan]: cloning repository into cache"
+                            f"[cyan]{repo_label}[/cyan]: cloning repository into cache"
                         )
 
                 cached_repo, repo_state = clone_or_update_repo(
@@ -681,11 +683,11 @@ def analyze_manifest(
                 )
                 if repo_state == "cloned":
                     CONSOLE.print(
-                        f"[cyan]{repo_key}[/cyan]: clone complete"
+                        f"[cyan]{repo_label}[/cyan]: clone complete"
                     )
                 elif repo_state == "refreshed":
                     CONSOLE.print(
-                        f"[cyan]{repo_key}[/cyan]: cache refresh complete"
+                        f"[cyan]{repo_label}[/cyan]: cache refresh complete"
                     )
                 branch_name = resolve_branch_name(
                     cached_repo,
@@ -693,7 +695,7 @@ def analyze_manifest(
                     manifest.default_branch,
                 )
                 CONSOLE.print(
-                    f"[cyan]{repo_key}[/cyan]: scanning commit history on branch "
+                    f"[cyan]{repo_label}[/cyan]: scanning commit history on branch "
                     f"[bold]{branch_name}[/bold]"
                 )
                 candidates = list_commit_candidates(
@@ -704,7 +706,7 @@ def analyze_manifest(
                     repo.exclude_globs,
                 )
                 CONSOLE.print(
-                    f"[cyan]{repo_key}[/cyan]: found {len(candidates)} eligible commit(s)"
+                    f"[cyan]{repo_label}[/cyan]: found {len(candidates)} eligible commit(s)"
                 )
                 selected = select_commits(
                     candidates,
@@ -714,16 +716,16 @@ def analyze_manifest(
                 )
                 if repo.pinned_refs:
                     CONSOLE.print(
-                        f"[cyan]{repo_key}[/cyan]: using {len(selected)} pinned ref(s)"
+                        f"[cyan]{repo_label}[/cyan]: using {len(selected)} pinned ref(s)"
                     )
                 else:
                     CONSOLE.print(
-                        f"[cyan]{repo_key}[/cyan]: selected {len(selected)} commit(s) with seed "
+                        f"[cyan]{repo_label}[/cyan]: selected {len(selected)} commit(s) with seed "
                         f"[bold]{repo_seed}[/bold]"
                     )
             except Exception as error:  # noqa: BLE001
                 CONSOLE.print(
-                    f"[red]{repo_key}[/red]: repository setup failed: {error}"
+                    f"[red]{repo_label}[/red]: repository setup failed: {error}"
                 )
                 rows.append(
                     CommitSummaryRow(
@@ -754,7 +756,7 @@ def analyze_manifest(
 
             if not selected:
                 CONSOLE.print(
-                    f"[yellow]{repo_key}[/yellow]: no eligible source-touching commits found"
+                    f"[yellow]{repo_label}[/yellow]: no eligible source-touching commits found"
                 )
                 rows.append(
                     CommitSummaryRow(
@@ -784,7 +786,7 @@ def analyze_manifest(
                 continue
 
             CONSOLE.print(
-                f"[cyan]{repo_key}[/cyan]: analyzing {len(selected)} commit(s) from branch "
+                f"[cyan]{repo_label}[/cyan]: analyzing {len(selected)} commit(s) from branch "
                 f"[bold]{branch_name}[/bold]"
             )
             for index, candidate in enumerate(selected, start=1):
@@ -795,7 +797,7 @@ def analyze_manifest(
                     / f"{index:03d}-{candidate.sha[:8]}"
                 )
                 CONSOLE.print(
-                    f"[cyan]{repo_key}[/cyan]: commit {index}/{len(selected)} "
+                    f"[cyan]{repo_label}[/cyan]: commit {index}/{len(selected)} "
                     f"[bold]{candidate.sha[:8]}[/bold]"
                 )
                 try:
@@ -845,12 +847,12 @@ def analyze_manifest(
                     )
                     rows.append(row)
                     CONSOLE.print(
-                        f"[green]{repo_key}[/green]: completed {candidate.sha[:8]} -> "
+                        f"[green]{repo_label}[/green]: completed {candidate.sha[:8]} -> "
                         f"{artifact_dir}"
                     )
                 except Exception as error:  # noqa: BLE001
                     CONSOLE.print(
-                        f"[red]{repo_key}[/red]: failed {candidate.sha[:8]}: {error}"
+                        f"[red]{repo_label}[/red]: failed {candidate.sha[:8]}: {error}"
                     )
                     rows.append(
                         CommitSummaryRow(
