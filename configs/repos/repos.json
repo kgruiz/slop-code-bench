@@ -243,6 +243,66 @@
             "name": "fastapi",
             "stars": "96.5k",
             "url": "https://github.com/fastapi/fastapi"
+        },
+        {
+            "name": "markitdown",
+            "url": "https://github.com/microsoft/markitdown"
+        },
+        {
+            "name": "ai-hedge-fund",
+            "url": "https://github.com/virattt/ai-hedge-fund"
+        },
+        {
+            "name": "Kronos",
+            "url": "https://github.com/shiyu-coder/Kronos"
+        },
+        {
+            "name": "hermes-agent",
+            "url": "https://github.com/NousResearch/hermes-agent"
+        },
+        {
+            "name": "vllm",
+            "url": "https://github.com/vllm-project/vllm"
+        },
+        {
+            "name": "awesome-systematic-trading",
+            "url": "https://github.com/paperswithbacktest/awesome-systematic-trading"
+        },
+        {
+            "name": "rich",
+            "url": "https://github.com/Textualize/rich"
+        },
+        {
+            "name": "streamlit",
+            "url": "https://github.com/streamlit/streamlit"
+        },
+        {
+            "name": "yfinance",
+            "url": "https://github.com/ranaroussi/yfinance"
+        },
+        {
+            "name": "Gooey",
+            "url": "https://github.com/chriskiehl/Gooey"
+        },
+        {
+            "name": "matplotlib",
+            "url": "https://github.com/matplotlib/matplotlib"
+        },
+        {
+            "name": "tiktoken",
+            "url": "https://github.com/openai/tiktoken"
+        },
+        {
+            "name": "tornado",
+            "url": "https://github.com/tornadoweb/tornado"
+        },
+        {
+            "name": "prefect",
+            "url": "https://github.com/PrefectHQ/prefect"
+        },
+        {
+            "name": "geoplot",
+            "url": "https://github.com/ResidentMario/geoplot"
         }
     ]
 }
