@@ -5,6 +5,7 @@ source-touching commits from each repository, checks those commits out into
 isolated snapshot directories, and runs the existing static metrics pipeline on
 each snapshot.
 """
+# ruff: noqa: E402, I001
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import json
 import random
 import shutil
 import subprocess
+import sys
 import tempfile
 from contextlib import ExitStack
 from dataclasses import asdict
@@ -33,6 +35,11 @@ from pydantic import ConfigDict
 from pydantic import Field
 from rich.console import Console
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 from slop_code.metrics import measure_snapshot_quality
 from slop_code.metrics.checkpoint import compute_checkpoint_erosion
 from slop_code.metrics.checkpoint import compute_checkpoint_verbosity
@@ -47,7 +54,7 @@ CONSOLE = Console()
 DEFAULT_HTTP_TIMEOUT = 10.0
 GIT_BIN = shutil.which("git") or "git"
 DEFAULT_MANIFEST_PATH = (
-    Path(__file__).resolve().parents[1] / "configs" / "repos" / "repos.json"
+    PROJECT_ROOT / "configs" / "repos" / "repos.json"
 )
 
 
