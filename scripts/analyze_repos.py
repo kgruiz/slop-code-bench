@@ -525,6 +525,7 @@ def analyze_manifest(
             sample_count = repo.sample_count or manifest.default_sample_count
             repo_output_dir = effective_output_dir / repo_key
             repo_output_dir.mkdir(parents=True, exist_ok=True)
+            CONSOLE.print(f"[cyan]{repo_key}[/cyan]: preparing repository")
 
             stars = fetch_github_stars(repo.url, client=http_client)
             if parse_github_repo(repo.url) and stars is None:
@@ -563,6 +564,9 @@ def analyze_manifest(
                     pinned_refs=repo.pinned_refs,
                 )
             except Exception as error:  # noqa: BLE001
+                CONSOLE.print(
+                    f"[red]{repo_key}[/red]: repository setup failed: {error}"
+                )
                 rows.append(
                     CommitSummaryRow(
                         repo_key=repo_key,
@@ -590,6 +594,9 @@ def analyze_manifest(
                 continue
 
             if not selected:
+                CONSOLE.print(
+                    f"[yellow]{repo_key}[/yellow]: no eligible source-touching commits found"
+                )
                 rows.append(
                     CommitSummaryRow(
                         repo_key=repo_key,
@@ -616,9 +623,17 @@ def analyze_manifest(
                 )
                 continue
 
+            CONSOLE.print(
+                f"[cyan]{repo_key}[/cyan]: analyzing {len(selected)} commit(s) from branch "
+                f"[bold]{branch_name}[/bold]"
+            )
             for index, candidate in enumerate(selected, start=1):
                 snapshot_dir = (
                     repo_output_dir / f"{index:03d}-{candidate.sha[:8]}"
+                )
+                CONSOLE.print(
+                    f"[cyan]{repo_key}[/cyan]: commit {index}/{len(selected)} "
+                    f"[bold]{candidate.sha[:8]}[/bold]"
                 )
                 try:
                     materialize_commit_snapshot(
@@ -665,7 +680,14 @@ def analyze_manifest(
                             error=None,
                         )
                     )
+                    CONSOLE.print(
+                        f"[green]{repo_key}[/green]: completed {candidate.sha[:8]} -> "
+                        f"{snapshot_dir}"
+                    )
                 except Exception as error:  # noqa: BLE001
+                    CONSOLE.print(
+                        f"[red]{repo_key}[/red]: failed {candidate.sha[:8]}: {error}"
+                    )
                     rows.append(
                         CommitSummaryRow(
                             repo_key=repo_key,
