@@ -232,3 +232,38 @@ def test_discover_entry_file_prefers_explicit_path(tmp_path: Path):
     entry = MODULE.discover_entry_file(tmp_path, {".py"}, "other.py")
 
     assert entry.name == "other.py"
+
+
+def test_run_metrics_for_snapshot_passes_entry_file_relative_to_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    snapshot_dir = tmp_path / "snapshot"
+    entry_file = snapshot_dir / "pkg" / "core.py"
+    entry_file.parent.mkdir(parents=True)
+    entry_file.write_text("def core():\n    return 1\n")
+
+    captured: dict[str, object] = {}
+
+    class _FakeQualityResult:
+        file_count = 1
+
+        class ast_grep:  # noqa: N801
+            violations = 0
+            rules_checked = 0
+
+    def fake_measure_snapshot_quality(entry_arg, snapshot_arg):
+        captured["entry_arg"] = entry_arg
+        captured["snapshot_arg"] = snapshot_arg
+        return _FakeQualityResult(), []
+
+    monkeypatch.setattr(MODULE, "measure_snapshot_quality", fake_measure_snapshot_quality)
+    monkeypatch.setattr(MODULE, "save_quality_metrics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(MODULE, "get_quality_metrics", lambda *args, **kwargs: {})
+    monkeypatch.setattr(MODULE, "compute_checkpoint_verbosity", lambda *args, **kwargs: 0.0)
+    monkeypatch.setattr(MODULE, "compute_checkpoint_erosion", lambda *args, **kwargs: 0.0)
+
+    MODULE.run_metrics_for_snapshot(snapshot_dir, entry_file)
+
+    assert captured["snapshot_arg"] == snapshot_dir
+    assert captured["entry_arg"] == Path("pkg/core.py")

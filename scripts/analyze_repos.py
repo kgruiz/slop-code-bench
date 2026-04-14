@@ -437,7 +437,10 @@ def run_metrics_for_snapshot(
 ) -> dict[str, int | float]:
     """Run snapshot quality metrics and save the standard artifacts."""
 
-    quality_result, file_metrics = measure_snapshot_quality(entry_file, snapshot_dir)
+    relative_entry_file = entry_file.relative_to(snapshot_dir)
+    quality_result, file_metrics = measure_snapshot_quality(
+        relative_entry_file, snapshot_dir
+    )
     save_quality_metrics(snapshot_dir, quality_result, file_metrics)
 
     flat_metrics = get_quality_metrics(snapshot_dir)
