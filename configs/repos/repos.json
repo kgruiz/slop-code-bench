@@ -3,244 +3,244 @@
     "seed": 42,
     "repos": [
         {
-            "repository": "simple-code-execution",
+            "name": "simple-code-execution",
             "stars": "4",
             "url": "https://github.com/gabeorlanski/simple-code-execution"
         },
         {
-            "repository": "aggregate-prefixes",
+            "name": "aggregate-prefixes",
             "stars": "50",
             "url": "https://github.com/lamehost/aggregate-prefixes"
         },
         {
-            "repository": "IART",
+            "name": "IART",
             "stars": "50",
             "url": "https://github.com/kai422/IART"
         },
         {
-            "repository": "mapyde",
+            "name": "mapyde",
             "stars": "50",
             "url": "https://github.com/scipp-atlas/mapyde"
         },
         {
-            "repository": "seagl-2020-bot",
+            "name": "seagl-2020-bot",
             "stars": "50",
             "url": "https://github.com/treedavies/seagl-2020-bot"
         },
         {
-            "repository": "babelcode",
+            "name": "babelcode",
             "stars": "53",
             "url": "https://github.com/google-research/babelcode"
         },
         {
-            "repository": "ansible-generator",
+            "name": "ansible-generator",
             "stars": "71",
             "url": "https://github.com/kkirsche/ansible-generator"
         },
         {
-            "repository": "scdlbot",
+            "name": "scdlbot",
             "stars": "418",
             "url": "https://github.com/gpchelkin/scdlbot"
         },
         {
-            "repository": "Makehuman",
+            "name": "Makehuman",
             "stars": "1.5k",
             "url": "https://github.com/makehumancommunity/makehuman"
         },
         {
-            "repository": "edgartools",
+            "name": "edgartools",
             "stars": "1.9k",
             "url": "https://github.com/dgunning/edgartools"
         },
         {
-            "repository": "python-projects",
+            "name": "python-projects",
             "stars": "2.1k",
             "url": null,
             "note": "not sure; there are multiple repos with this exact name"
         },
         {
-            "repository": "omegaconf",
+            "name": "omegaconf",
             "stars": "2.4k",
             "url": "https://github.com/omry/omegaconf"
         },
         {
-            "repository": "textdistance",
+            "name": "textdistance",
             "stars": "3.5k",
             "url": "https://github.com/life4/textdistance"
         },
         {
-            "repository": "strawberry",
+            "name": "strawberry",
             "stars": "4.6k",
             "url": "https://github.com/strawberry-graphql/strawberry"
         },
         {
-            "repository": "structlog",
+            "name": "structlog",
             "stars": "4.7k",
             "url": "https://github.com/hynek/structlog"
         },
         {
-            "repository": "jsonschema",
+            "name": "jsonschema",
             "stars": "4.9k",
             "url": "https://github.com/python-jsonschema/jsonschema"
         },
         {
-            "repository": "boltons",
+            "name": "boltons",
             "stars": "6.9k",
             "url": "https://github.com/mahmoud/boltons"
         },
         {
-            "repository": "flower",
+            "name": "flower",
             "stars": "7.1k",
             "url": "https://github.com/mher/flower"
         },
         {
-            "repository": "records",
+            "name": "records",
             "stars": "7.2k",
             "url": "https://github.com/kennethreitz/records"
         },
         {
-            "repository": "boto3",
+            "name": "boto3",
             "stars": "9.7k",
             "url": "https://github.com/boto/boto3"
         },
         {
-            "repository": "uvicorn",
+            "name": "uvicorn",
             "stars": "10.5k",
             "url": "https://github.com/Kludex/uvicorn"
         },
         {
-            "repository": "great_expectations",
+            "name": "great_expectations",
             "stars": "11.3k",
             "url": "https://github.com/great-expectations/great_expectations"
         },
         {
-            "repository": "statsmodels",
+            "name": "statsmodels",
             "stars": "11.3k",
             "url": "https://github.com/statsmodels/statsmodels"
         },
         {
-            "repository": "jinja",
+            "name": "jinja",
             "stars": "11.5k",
             "url": "https://github.com/pallets/jinja"
         },
         {
-            "repository": "sqlalchemy",
+            "name": "sqlalchemy",
             "stars": "11.7k",
             "url": "https://github.com/sqlalchemy/sqlalchemy"
         },
         {
-            "repository": "pytest",
+            "name": "pytest",
             "stars": "13.7k",
             "url": "https://github.com/pytest-dev/pytest"
         },
         {
-            "repository": "scipy",
+            "name": "scipy",
             "stars": "14.6k",
             "url": "https://github.com/scipy/scipy"
         },
         {
-            "repository": "httpx",
+            "name": "httpx",
             "stars": "15.2k",
             "url": "https://github.com/encode/httpx"
         },
         {
-            "repository": "salt",
+            "name": "salt",
             "stars": "15.3k",
             "url": "https://github.com/saltstack/salt"
         },
         {
-            "repository": "aiohttp",
+            "name": "aiohttp",
             "stars": "16.4k",
             "url": "https://github.com/aio-libs/aiohttp"
         },
         {
-            "repository": "click",
+            "name": "click",
             "stars": "17.4k",
             "url": "https://github.com/pallets/click"
         },
         {
-            "repository": "Ciphey",
+            "name": "Ciphey",
             "stars": "21.3k",
             "url": "https://github.com/bee-san/Ciphey",
             "note": "this projects appears to be written in Rust?"
         },
         {
-            "repository": "pydantic",
+            "name": "pydantic",
             "stars": "27.3k",
             "url": "https://github.com/pydantic/pydantic"
         },
         {
-            "repository": "Locust",
+            "name": "Locust",
             "stars": "27.6k",
             "url": "https://github.com/locustio/locust"
         },
         {
-            "repository": "celery",
+            "name": "celery",
             "stars": "28.3k",
             "url": "https://github.com/celery/celery"
         },
         {
-            "repository": "tqdm",
+            "name": "tqdm",
             "stars": "31.1k",
             "url": "https://github.com/tqdm/tqdm"
         },
         {
-            "repository": "poetry",
+            "name": "poetry",
             "stars": "34.3k",
             "url": "https://github.com/python-poetry/poetry"
         },
         {
-            "repository": "httpie-cli",
+            "name": "httpie-cli",
             "stars": "37.8k",
             "url": "https://github.com/httpie/cli"
         },
         {
-            "repository": "mitmproxy",
+            "name": "mitmproxy",
             "stars": "42.8k",
             "url": "https://github.com/mitmproxy/mitmproxy"
         },
         {
-            "repository": "airflow",
+            "name": "airflow",
             "stars": "44.7k",
             "url": "https://github.com/apache/airflow"
         },
         {
-            "repository": "requests",
+            "name": "requests",
             "stars": "53.9k",
             "url": "https://github.com/psf/requests"
         },
         {
-            "repository": "scrapy",
+            "name": "scrapy",
             "stars": "60.9k",
             "url": "https://github.com/scrapy/scrapy"
         },
         {
-            "repository": "scikit-learn",
+            "name": "scikit-learn",
             "stars": "65.5k",
             "url": "https://github.com/scikit-learn/scikit-learn"
         },
         {
-            "repository": "ansible",
+            "name": "ansible",
             "stars": "68.4k",
             "url": "https://github.com/ansible/ansible"
         },
         {
-            "repository": "flask",
+            "name": "flask",
             "stars": "71.4k",
             "url": "https://github.com/pallets/flask"
         },
         {
-            "repository": "django",
+            "name": "django",
             "stars": "87.1k",
             "url": "https://github.com/django/django"
         },
         {
-            "repository": "thefuck",
+            "name": "thefuck",
             "stars": "95.7k",
             "url": "https://github.com/nvbn/thefuck"
         },
         {
-            "repository": "fastapi",
+            "name": "fastapi",
             "stars": "96.5k",
             "url": "https://github.com/fastapi/fastapi"
         }
