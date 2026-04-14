@@ -1,5 +1,5 @@
 {
-    "default_sample_count": 3,
+    "default_sample_count": 30,
     "seed": 42,
     "repos": [
         {
