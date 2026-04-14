@@ -498,6 +498,17 @@ def write_summary_json(
         json.dump(payload, summary_file, indent=2, sort_keys=True)
 
 
+def write_retained_snapshot_metadata(
+    output_path: Path,
+    row: CommitSummaryRow,
+) -> None:
+    """Write metadata for the single retained artifact snapshot per repo."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as metadata_file:
+        json.dump(asdict(row), metadata_file, indent=2, sort_keys=True)
+
+
 def analyze_manifest(
     manifest_path: Path,
     *,
@@ -541,7 +552,10 @@ def analyze_manifest(
             repo_seed = seed if seed is not None else manifest.seed
             sample_count = repo.sample_count or manifest.default_sample_count
             repo_output_dir = effective_output_dir / repo_key
+            artifact_dir = repo_output_dir / "latest"
+            retained_metadata_path = repo_output_dir / "retained_snapshot.json"
             repo_output_dir.mkdir(parents=True, exist_ok=True)
+            retained_row: CommitSummaryRow | None = None
             CONSOLE.print(f"[cyan]{repo_key}[/cyan]: preparing repository")
 
             stars = fetch_github_stars(repo.url, client=http_client)
@@ -645,7 +659,6 @@ def analyze_manifest(
                 f"[bold]{branch_name}[/bold]"
             )
             for index, candidate in enumerate(selected, start=1):
-                artifact_dir = repo_output_dir / f"{index:03d}-{candidate.sha[:8]}"
                 snapshot_dir = (
                     workspace_root
                     / repo_key
@@ -671,36 +684,39 @@ def analyze_manifest(
                         entry_path,
                         artifact_dir,
                     )
-                    rows.append(
-                        CommitSummaryRow(
-                            repo_key=repo_key,
-                            repo_url=repo.url,
-                            branch=branch_name,
-                            stars=stars,
-                            commit_sha=candidate.sha,
-                            commit_short_sha=candidate.sha[:8],
-                            commit_timestamp=candidate.committed_at,
-                            sample_ordinal=index,
-                            resolved_entry_file=str(
-                                entry_path.relative_to(snapshot_dir)
-                            ),
-                            snapshot_path=str(artifact_dir),
-                            file_count=int(metric_summary["file_count"]),
-                            loc=int(metric_summary["loc"]),
-                            violation_pct=float(metric_summary["violation_pct"]),
-                            ast_grep_violations=int(
-                                metric_summary["ast_grep_violations"]
-                            ),
-                            ast_grep_rules_checked=int(
-                                metric_summary["ast_grep_rules_checked"]
-                            ),
-                            clone_ratio=float(metric_summary["clone_ratio"]),
-                            verbosity=float(metric_summary["verbosity"]),
-                            erosion=float(metric_summary["erosion"]),
-                            status="ok",
-                            error=None,
-                        )
+                    row = CommitSummaryRow(
+                        repo_key=repo_key,
+                        repo_url=repo.url,
+                        branch=branch_name,
+                        stars=stars,
+                        commit_sha=candidate.sha,
+                        commit_short_sha=candidate.sha[:8],
+                        commit_timestamp=candidate.committed_at,
+                        sample_ordinal=index,
+                        resolved_entry_file=str(
+                            entry_path.relative_to(snapshot_dir)
+                        ),
+                        snapshot_path=str(artifact_dir),
+                        file_count=int(metric_summary["file_count"]),
+                        loc=int(metric_summary["loc"]),
+                        violation_pct=float(metric_summary["violation_pct"]),
+                        ast_grep_violations=int(
+                            metric_summary["ast_grep_violations"]
+                        ),
+                        ast_grep_rules_checked=int(
+                            metric_summary["ast_grep_rules_checked"]
+                        ),
+                        clone_ratio=float(metric_summary["clone_ratio"]),
+                        verbosity=float(metric_summary["verbosity"]),
+                        erosion=float(metric_summary["erosion"]),
+                        status="ok",
+                        error=None,
                     )
+                    if retained_row is not None:
+                        retained_row.snapshot_path = None
+                    retained_row = row
+                    rows.append(row)
+                    write_retained_snapshot_metadata(retained_metadata_path, row)
                     CONSOLE.print(
                         f"[green]{repo_key}[/green]: completed {candidate.sha[:8]} -> "
                         f"{artifact_dir}"
