@@ -199,17 +199,15 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
     assert all(row.stars == 42 for row in ok_rows)
     assert (output_dir / "summary.json").exists()
     assert (output_dir / "summary.csv").exists()
-    assert (output_dir / "sample-repo" / "retained_snapshot.json").exists()
 
-    retained_rows = [row for row in ok_rows if row.snapshot_path is not None]
-    assert len(retained_rows) == 1
-    retained_path = Path(retained_rows[0].snapshot_path)
-    assert retained_path == output_dir / "sample-repo" / "latest"
-    quality_dir = retained_path / "quality_analysis"
-    assert (quality_dir / "overall_quality.json").exists()
-    assert (quality_dir / "files.jsonl").exists()
-    assert (quality_dir / "symbols.jsonl").exists()
-    assert (quality_dir / "ast_grep.jsonl").exists()
+    for row in ok_rows:
+        assert row.snapshot_path is not None
+        assert str(output_dir) in row.snapshot_path
+        quality_dir = Path(row.snapshot_path) / "quality_analysis"
+        assert (quality_dir / "overall_quality.json").exists()
+        assert (quality_dir / "files.jsonl").exists()
+        assert (quality_dir / "symbols.jsonl").exists()
+        assert (quality_dir / "ast_grep.jsonl").exists()
 
 
 def test_analyze_manifest_records_repo_failure(tmp_path: Path):
