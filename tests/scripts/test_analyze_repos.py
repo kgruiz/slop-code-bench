@@ -106,7 +106,11 @@ def test_fetch_github_stars_returns_none_on_http_failure(monkeypatch: pytest.Mon
 
 def test_list_commit_candidates_only_includes_source_touching(git_remote: Path, tmp_path: Path):
     cache_dir = tmp_path / "cache"
-    repo = MODULE.clone_or_update_repo(str(git_remote), cache_dir / "sample", refresh=False)
+    repo, _repo_state = MODULE.clone_or_update_repo(
+        str(git_remote),
+        cache_dir / "sample",
+        refresh=False,
+    )
     branch = MODULE.resolve_branch_name(repo, None, None)
 
     candidates = MODULE.list_commit_candidates(

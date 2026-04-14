@@ -232,17 +232,18 @@ def clone_or_update_repo(
     cache_repo_path: Path,
     *,
     refresh: bool,
-) -> Repo:
+) -> tuple[Repo, str]:
     """Clone a repo into the cache, or refresh it if already cached."""
 
     if cache_repo_path.exists():
         repo = Repo(cache_repo_path)
         if refresh:
             repo.remotes.origin.fetch(prune=True, tags=True)
-        return repo
+            return repo, "refreshed"
+        return repo, "reused"
 
     cache_repo_path.parent.mkdir(parents=True, exist_ok=True)
-    return Repo.clone_from(repo_url, cache_repo_path)
+    return Repo.clone_from(repo_url, cache_repo_path), "cloned"
 
 
 def resolve_branch_name(
@@ -554,18 +555,46 @@ def analyze_manifest(
                 if no_cache:
                     temp_dir = Path(exit_stack.enter_context(tempfile.TemporaryDirectory()))
                     cache_repo_path = temp_dir / repo_key
+                    CONSOLE.print(
+                        f"[cyan]{repo_key}[/cyan]: cloning temporary repository"
+                    )
                 else:
                     cache_repo_path = cache_dir / repo_key
+                    if cache_repo_path.exists():
+                        if refresh:
+                            CONSOLE.print(
+                                f"[cyan]{repo_key}[/cyan]: refreshing cached repository"
+                            )
+                        else:
+                            CONSOLE.print(
+                                f"[cyan]{repo_key}[/cyan]: reusing cached repository"
+                            )
+                    else:
+                        CONSOLE.print(
+                            f"[cyan]{repo_key}[/cyan]: cloning repository into cache"
+                        )
 
-                cached_repo = clone_or_update_repo(
+                cached_repo, repo_state = clone_or_update_repo(
                     repo.url,
                     cache_repo_path,
                     refresh=refresh,
                 )
+                if repo_state == "cloned":
+                    CONSOLE.print(
+                        f"[cyan]{repo_key}[/cyan]: clone complete"
+                    )
+                elif repo_state == "refreshed":
+                    CONSOLE.print(
+                        f"[cyan]{repo_key}[/cyan]: cache refresh complete"
+                    )
                 branch_name = resolve_branch_name(
                     cached_repo,
                     repo.branch,
                     manifest.default_branch,
+                )
+                CONSOLE.print(
+                    f"[cyan]{repo_key}[/cyan]: scanning commit history on branch "
+                    f"[bold]{branch_name}[/bold]"
                 )
                 candidates = list_commit_candidates(
                     cached_repo,
@@ -574,12 +603,24 @@ def analyze_manifest(
                     repo.include_globs,
                     repo.exclude_globs,
                 )
+                CONSOLE.print(
+                    f"[cyan]{repo_key}[/cyan]: found {len(candidates)} eligible commit(s)"
+                )
                 selected = select_commits(
                     candidates,
                     sample_count=sample_count,
                     seed=repo_seed,
                     pinned_refs=repo.pinned_refs,
                 )
+                if repo.pinned_refs:
+                    CONSOLE.print(
+                        f"[cyan]{repo_key}[/cyan]: using {len(selected)} pinned ref(s)"
+                    )
+                else:
+                    CONSOLE.print(
+                        f"[cyan]{repo_key}[/cyan]: selected {len(selected)} commit(s) with seed "
+                        f"[bold]{repo_seed}[/bold]"
+                    )
             except Exception as error:  # noqa: BLE001
                 CONSOLE.print(
                     f"[red]{repo_key}[/red]: repository setup failed: {error}"
