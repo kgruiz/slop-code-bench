@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import warnings
 from contextlib import ExitStack
 from dataclasses import asdict
 from dataclasses import dataclass
@@ -445,9 +446,11 @@ def run_metrics_for_snapshot(
     """Run snapshot quality metrics and save the standard artifacts."""
 
     relative_entry_file = entry_file.relative_to(snapshot_dir)
-    quality_result, file_metrics = measure_snapshot_quality(
-        relative_entry_file, snapshot_dir
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        quality_result, file_metrics = measure_snapshot_quality(
+            relative_entry_file, snapshot_dir
+        )
     save_quality_metrics(snapshot_dir, quality_result, file_metrics)
 
     flat_metrics = get_quality_metrics(snapshot_dir)
