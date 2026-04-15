@@ -561,6 +561,7 @@ def analyze_manifest(
     no_cache: bool = False,
     refresh: bool = False,
     repo_name: str | None = None,
+    skip_repos: tuple[str, ...] = (),
 ) -> list[CommitSummaryRow]:
     """Run repo analysis for a manifest and return all summary rows."""
 
@@ -581,6 +582,13 @@ def analyze_manifest(
     if repo_name is not None:
         repos = [
             repo for repo in repos if (repo.name or derive_repo_key(repo)) == repo_name
+        ]
+    if skip_repos:
+        skip_repo_names = set(skip_repos)
+        repos = [
+            repo
+            for repo in repos
+            if (repo.name or derive_repo_key(repo)) not in skip_repo_names
         ]
 
     if not no_cache:
@@ -918,6 +926,13 @@ def main(
         bool | None, typer.Option("--refresh", is_flag=True)
     ] = None,
     repo: Annotated[str | None, typer.Option()] = None,
+    skip_repo: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--skip-repo",
+            help="Repo name/key to exclude. May be provided multiple times.",
+        ),
+    ] = None,
 ) -> None:
     """Run manifest-driven repo snapshot analysis."""
 
@@ -928,6 +943,7 @@ def main(
         no_cache=bool(no_cache),
         refresh=bool(refresh),
         repo_name=repo,
+        skip_repos=tuple(skip_repo or ()),
     )
 
     ok_count = sum(1 for row in rows if row.status == "ok")

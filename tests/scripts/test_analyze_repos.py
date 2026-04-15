@@ -403,6 +403,67 @@ def test_analyze_manifest_prefers_manifest_stars_over_lookup(
     assert rows[0].note == "from paper"
 
 
+def test_analyze_manifest_skips_named_repo_filter(
+    git_remote: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest_path = tmp_path / "repos.json"
+    output_dir = tmp_path / "out"
+    _write_json(
+        manifest_path,
+        {
+            "default_sample_count": 1,
+            "output_dir": str(output_dir),
+            "repos": [
+                {
+                    "name": "skip-me",
+                    "url": str(git_remote),
+                },
+                {
+                    "name": "keep-me",
+                    "url": str(git_remote),
+                },
+            ],
+        },
+    )
+
+    monkeypatch.setattr(MODULE, "fetch_github_stars", lambda *args, **kwargs: "42")
+
+    def fake_run_metrics(
+        snapshot_dir: Path,
+        entry_file: Path,
+        artifact_dir: Path,
+    ) -> dict[str, float | int]:
+        quality_dir = artifact_dir / "quality_analysis"
+        quality_dir.mkdir(parents=True, exist_ok=True)
+        (quality_dir / "overall_quality.json").write_text("{}")
+        (quality_dir / "files.jsonl").write_text("")
+        (quality_dir / "symbols.jsonl").write_text("")
+        (quality_dir / "ast_grep.jsonl").write_text("")
+        return {
+            "file_count": 1,
+            "loc": 10,
+            "violation_pct": 0.0,
+            "ast_grep_violations": 0,
+            "ast_grep_rules_checked": 1,
+            "clone_ratio": 0.0,
+            "verbosity": 0.0,
+            "erosion": 0.0,
+        }
+
+    monkeypatch.setattr(MODULE, "run_metrics_for_snapshot", fake_run_metrics)
+
+    rows = MODULE.analyze_manifest(
+        manifest_path,
+        skip_repos=("skip-me",),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].status == "ok"
+    assert rows[0].repo_key == "keep-me"
+
+
 def test_discover_entry_file_prefers_explicit_path(tmp_path: Path):
     (tmp_path / "main.py").write_text("print('x')\n")
     (tmp_path / "other.py").write_text("print('y')\n")
