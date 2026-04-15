@@ -18,9 +18,10 @@ import sys
 import tempfile
 import time
 import warnings
+from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import asdict
 from dataclasses import dataclass
+from dataclasses import asdict
 from datetime import UTC
 from datetime import datetime
 from fnmatch import fnmatch
@@ -85,6 +86,47 @@ def format_duration(seconds: float) -> str:
         return f"{seconds:.1f}s"
 
     return f"{seconds * 1000:.0f}ms"
+
+
+@dataclass
+class DebugLogWriter:
+    """Append structured debug events to a JSONL file during a run."""
+
+    output_path: Path
+
+    def __post_init__(self) -> None:
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self.output_path.open("w", encoding="utf-8")
+
+    def write_event(self, event: dict[str, object]) -> None:
+        self._handle.write(json.dumps(event, sort_keys=True) + "\n")
+        self._handle.flush()
+
+    def close(self) -> None:
+        self._handle.close()
+
+
+def write_json_atomic(output_path: Path, payload: dict[str, object]) -> None:
+    """Write JSON to disk using a same-directory temporary file."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_name(f".{output_path.name}.tmp")
+    with temp_path.open("w", encoding="utf-8") as summary_file:
+        json.dump(payload, summary_file, indent=2, sort_keys=True)
+    temp_path.replace(output_path)
+
+
+def write_csv_atomic(output_path: Path, rows: list[CommitSummaryRow]) -> None:
+    """Write CSV to disk using a same-directory temporary file."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_name(f".{output_path.name}.tmp")
+    with temp_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=list(asdict(rows[0]).keys()))
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(asdict(row))
+    temp_path.replace(output_path)
 
 
 class RepoEntry(BaseModel):
@@ -529,16 +571,17 @@ def run_metrics_for_snapshot(
     debug: bool = False,
     repo_label: str | None = None,
     commit_label: str | None = None,
+    progress_callback: Callable[[str], None] = print_progress,
 ) -> dict[str, int | float]:
     """Run snapshot quality metrics and save the standard artifacts."""
 
     relative_entry_file = entry_file.relative_to(snapshot_dir)
     if debug and repo_label and commit_label:
-        print_progress(
+        progress_callback(
             f"[blue]{repo_label}[/blue]: {commit_label}: running "
             "[bold]measure_snapshot_quality[/bold]"
         )
-        print_progress(
+        progress_callback(
             f"[blue]{repo_label}[/blue]: {commit_label}: metric families "
             "[bold]line[/bold], [bold]lint[/bold], [bold]symbol[/bold], "
             "[bold]mi[/bold], [bold]imports[/bold], [bold]redundancy[/bold], "
@@ -572,12 +615,12 @@ def run_metrics_for_snapshot(
                 if duration > 0
             ]
             if timing_parts:
-                print_progress(
+                progress_callback(
                     f"[blue]{repo_label}[/blue]: {commit_label}: "
                     f"[bold]measure_snapshot_quality[/bold] timings "
                     + ", ".join(timing_parts)
                 )
-        print_progress(
+        progress_callback(
             f"[blue]{repo_label}[/blue]: {commit_label}: writing "
             f"[bold]quality_analysis[/bold] artifacts after "
             f"{format_duration(measure_elapsed)}"
@@ -585,7 +628,7 @@ def run_metrics_for_snapshot(
     save_quality_metrics(artifact_dir, quality_result, file_metrics)
 
     if debug and repo_label and commit_label:
-        print_progress(
+        progress_callback(
             f"[blue]{repo_label}[/blue]: {commit_label}: computing "
             "[bold]loc[/bold], [bold]violation_pct[/bold], "
             "[bold]clone_ratio[/bold], [bold]verbosity[/bold], "
@@ -606,7 +649,7 @@ def run_metrics_for_snapshot(
         "erosion": float(erosion) if erosion is not None else 0.0,
     }
     if debug and repo_label and commit_label:
-        print_progress(
+        progress_callback(
             f"[blue]{repo_label}[/blue]: {commit_label}: metrics "
             f"LOC=[bold]{metric_summary['loc']}[/bold] "
             f"files=[bold]{metric_summary['file_count']}[/bold] "
@@ -621,12 +664,7 @@ def run_metrics_for_snapshot(
 def write_summary_csv(output_path: Path, rows: list[CommitSummaryRow]) -> None:
     """Write per-commit summary rows to CSV."""
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=list(asdict(rows[0]).keys()))
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(asdict(row))
+    write_csv_atomic(output_path, rows)
 
 
 def write_summary_json(
@@ -636,14 +674,30 @@ def write_summary_json(
 ) -> None:
     """Write machine-readable run summary."""
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "manifest": str(manifest_path),
         "generated_at": datetime.now(tz=UTC).isoformat(),
         "rows": [asdict(row) for row in rows],
     }
-    with output_path.open("w") as summary_file:
-        json.dump(payload, summary_file, indent=2, sort_keys=True)
+    write_json_atomic(output_path, payload)
+
+
+def persist_run_summaries(
+    output_dir: Path,
+    rows: list[CommitSummaryRow],
+    manifest_path: Path,
+) -> None:
+    """Persist the current run summaries when rows are available."""
+
+    if not rows:
+        return
+
+    write_summary_json(
+        output_dir / "summary.json",
+        rows,
+        manifest_path,
+    )
+    write_summary_csv(output_dir / "summary.csv", rows)
 
 
 def analyze_manifest(
@@ -656,6 +710,7 @@ def analyze_manifest(
     repo_name: str | None = None,
     skip_repos: tuple[str, ...] = (),
     debug: bool = False,
+    write_during_run: bool = True,
 ) -> list[CommitSummaryRow]:
     """Run repo analysis for a manifest and return all summary rows."""
 
@@ -688,14 +743,71 @@ def analyze_manifest(
     if not no_cache:
         validate_cache_repo_targets(repos, cache_dir)
 
+    debug_writer: DebugLogWriter | None = None
+    if debug:
+        debug_writer = DebugLogWriter(effective_output_dir / "debug.jsonl")
+
+    def emit_progress(
+        message: str,
+        *,
+        level: str = "info",
+        repo_index: int | None = None,
+        repo_total: int | None = None,
+        repo_key: str | None = None,
+        commit_index: int | None = None,
+        commit_total: int | None = None,
+        commit_sha: str | None = None,
+        stage: str | None = None,
+    ) -> None:
+        print_progress(message)
+        if debug_writer is None:
+            return
+        debug_writer.write_event(
+            {
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+                "level": level,
+                "repo_index": repo_index,
+                "repo_total": repo_total,
+                "repo_key": repo_key,
+                "commit_index": commit_index,
+                "commit_total": commit_total,
+                "commit_sha": commit_sha,
+                "stage": stage,
+                "message": message,
+            }
+        )
+
+    def append_row(row: CommitSummaryRow) -> None:
+        rows.append(row)
+        if write_during_run:
+            persist_run_summaries(
+                effective_output_dir,
+                rows,
+                manifest_path,
+            )
+
     ast_grep_bin = _get_ast_grep_binary()
     if ast_grep_bin is None:
-        print_progress(
+        emit_progress(
             "[yellow]ast-grep[/yellow]: not found; AST-grep rule checks will be skipped"
         )
     else:
-        print_progress(
+        emit_progress(
             f"[cyan]ast-grep[/cyan]: using [bold]{ast_grep_bin}[/bold]"
+        )
+    if debug_writer is not None:
+        debug_writer.write_event(
+            {
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+                "level": "info",
+                "stage": "run_start",
+                "message": "repo analysis run started",
+                "manifest": str(manifest_path),
+                "output_dir": str(effective_output_dir),
+                "seed": seed if seed is not None else manifest.seed,
+                "write_during_run": write_during_run,
+                "ast_grep_bin": ast_grep_bin,
+            }
         )
 
     with ExitStack() as exit_stack:
@@ -715,10 +827,14 @@ def analyze_manifest(
             repo_output_dir = effective_output_dir / repo_key
             stars = repo.stars
             if repo.url is None:
-                print_progress(
-                    f"[yellow]{repo_label}[/yellow]: no URL configured, skipping"
+                emit_progress(
+                    f"[yellow]{repo_label}[/yellow]: no URL configured, skipping",
+                    repo_index=repo_index,
+                    repo_total=total_repos,
+                    repo_key=repo_key,
+                    stage="missing_url",
                 )
-                rows.append(
+                append_row(
                     CommitSummaryRow(
                         repo_key=repo_key,
                         repo_url=None,
@@ -746,12 +862,18 @@ def analyze_manifest(
                 continue
 
             repo_output_dir.mkdir(parents=True, exist_ok=True)
-            print_progress(f"[cyan]{repo_label}[/cyan]: preparing repository")
+            emit_progress(
+                f"[cyan]{repo_label}[/cyan]: preparing repository",
+                repo_index=repo_index,
+                repo_total=total_repos,
+                repo_key=repo_key,
+                stage="prepare_repository",
+            )
 
             if stars is None:
                 stars = fetch_github_stars(repo.url, client=http_client)
                 if parse_github_repo(repo.url) and stars is None:
-                    print_progress(
+                    emit_progress(
                         f"[yellow]{repo_label}: could not fetch GitHub stars; continuing.[/yellow]"
                     )
 
@@ -759,23 +881,39 @@ def analyze_manifest(
                 if no_cache:
                     temp_dir = Path(exit_stack.enter_context(tempfile.TemporaryDirectory()))
                     cache_repo_path = temp_dir / repo_key
-                    print_progress(
-                        f"[cyan]{repo_label}[/cyan]: cloning temporary repository"
+                    emit_progress(
+                        f"[cyan]{repo_label}[/cyan]: cloning temporary repository",
+                        repo_index=repo_index,
+                        repo_total=total_repos,
+                        repo_key=repo_key,
+                        stage="clone_temporary_repository",
                     )
                 else:
                     cache_repo_path = cache_dir / repo_key
                     if cache_repo_path.exists():
                         if refresh:
-                            print_progress(
-                                f"[cyan]{repo_label}[/cyan]: refreshing cached repository"
+                            emit_progress(
+                                f"[cyan]{repo_label}[/cyan]: refreshing cached repository",
+                                repo_index=repo_index,
+                                repo_total=total_repos,
+                                repo_key=repo_key,
+                                stage="refresh_cached_repository",
                             )
                         else:
-                            print_progress(
-                                f"[cyan]{repo_label}[/cyan]: reusing cached repository"
+                            emit_progress(
+                                f"[cyan]{repo_label}[/cyan]: reusing cached repository",
+                                repo_index=repo_index,
+                                repo_total=total_repos,
+                                repo_key=repo_key,
+                                stage="reuse_cached_repository",
                             )
                     else:
-                        print_progress(
-                            f"[cyan]{repo_label}[/cyan]: cloning repository into cache"
+                        emit_progress(
+                            f"[cyan]{repo_label}[/cyan]: cloning repository into cache",
+                            repo_index=repo_index,
+                            repo_total=total_repos,
+                            repo_key=repo_key,
+                            stage="clone_repository_into_cache",
                         )
 
                 cached_repo, repo_state = clone_or_update_repo(
@@ -784,21 +922,33 @@ def analyze_manifest(
                     refresh=refresh,
                 )
                 if repo_state == "cloned":
-                    print_progress(
-                        f"[cyan]{repo_label}[/cyan]: clone complete"
+                    emit_progress(
+                        f"[cyan]{repo_label}[/cyan]: clone complete",
+                        repo_index=repo_index,
+                        repo_total=total_repos,
+                        repo_key=repo_key,
+                        stage="clone_complete",
                     )
                 elif repo_state == "refreshed":
-                    print_progress(
-                        f"[cyan]{repo_label}[/cyan]: cache refresh complete"
+                    emit_progress(
+                        f"[cyan]{repo_label}[/cyan]: cache refresh complete",
+                        repo_index=repo_index,
+                        repo_total=total_repos,
+                        repo_key=repo_key,
+                        stage="cache_refresh_complete",
                     )
                 branch_name = resolve_branch_name(
                     cached_repo,
                     repo.branch,
                     manifest.default_branch,
                 )
-                print_progress(
+                emit_progress(
                     f"[cyan]{repo_label}[/cyan]: scanning commit history on branch "
-                    f"[bold]{branch_name}[/bold]"
+                    f"[bold]{branch_name}[/bold]",
+                    repo_index=repo_index,
+                    repo_total=total_repos,
+                    repo_key=repo_key,
+                    stage="scan_commit_history",
                 )
                 candidates = list_commit_candidates(
                     cached_repo,
@@ -807,8 +957,12 @@ def analyze_manifest(
                     repo.include_globs,
                     repo.exclude_globs,
                 )
-                print_progress(
-                    f"[cyan]{repo_label}[/cyan]: found {len(candidates)} eligible commit(s)"
+                emit_progress(
+                    f"[cyan]{repo_label}[/cyan]: found {len(candidates)} eligible commit(s)",
+                    repo_index=repo_index,
+                    repo_total=total_repos,
+                    repo_key=repo_key,
+                    stage="commit_candidates",
                 )
                 selected = select_commits(
                     candidates,
@@ -817,24 +971,41 @@ def analyze_manifest(
                     pinned_refs=repo.pinned_refs,
                 )
                 if repo.pinned_refs:
-                    print_progress(
-                        f"[cyan]{repo_label}[/cyan]: using {len(selected)} pinned ref(s)"
+                    emit_progress(
+                        f"[cyan]{repo_label}[/cyan]: using {len(selected)} pinned ref(s)",
+                        repo_index=repo_index,
+                        repo_total=total_repos,
+                        repo_key=repo_key,
+                        stage="pinned_refs",
                     )
                 else:
-                    print_progress(
+                    emit_progress(
                         f"[cyan]{repo_label}[/cyan]: selected {len(selected)} commit(s) with seed "
-                        f"[bold]{repo_seed}[/bold]"
+                        f"[bold]{repo_seed}[/bold]",
+                        repo_index=repo_index,
+                        repo_total=total_repos,
+                        repo_key=repo_key,
+                        stage="commit_selection",
                     )
 
                 stars_text = f" stars=[bold]{stars}[/bold]" if stars else ""
-                print_progress(
-                    f"[cyan]{repo_label}[/cyan]: ready on branch [bold]{branch_name}[/bold]{stars_text}"
+                emit_progress(
+                    f"[cyan]{repo_label}[/cyan]: ready on branch [bold]{branch_name}[/bold]{stars_text}",
+                    repo_index=repo_index,
+                    repo_total=total_repos,
+                    repo_key=repo_key,
+                    stage="repo_ready",
                 )
             except Exception as error:  # noqa: BLE001
-                print_progress(
-                    f"[red]{repo_label}[/red]: repository setup failed: {error}"
+                emit_progress(
+                    f"[red]{repo_label}[/red]: repository setup failed: {error}",
+                    level="error",
+                    repo_index=repo_index,
+                    repo_total=total_repos,
+                    repo_key=repo_key,
+                    stage="repo_setup_failed",
                 )
-                rows.append(
+                append_row(
                     CommitSummaryRow(
                         repo_key=repo_key,
                         repo_url=repo.url,
@@ -862,10 +1033,14 @@ def analyze_manifest(
                 continue
 
             if not selected:
-                print_progress(
-                    f"[yellow]{repo_label}[/yellow]: no eligible source-touching commits found"
+                emit_progress(
+                    f"[yellow]{repo_label}[/yellow]: no eligible source-touching commits found",
+                    repo_index=repo_index,
+                    repo_total=total_repos,
+                    repo_key=repo_key,
+                    stage="no_eligible_commits",
                 )
-                rows.append(
+                append_row(
                     CommitSummaryRow(
                         repo_key=repo_key,
                         repo_url=repo.url,
@@ -892,9 +1067,13 @@ def analyze_manifest(
                 )
                 continue
 
-            print_progress(
+            emit_progress(
                 f"[cyan]{repo_label}[/cyan]: analyzing {len(selected)} commit(s) from branch "
-                f"[bold]{branch_name}[/bold]"
+                f"[bold]{branch_name}[/bold]",
+                repo_index=repo_index,
+                repo_total=total_repos,
+                repo_key=repo_key,
+                stage="analyzing_commits",
             )
             for index, candidate in enumerate(selected, start=1):
                 artifact_dir = repo_output_dir / f"{index:03d}-{candidate.sha[:8]}"
@@ -907,13 +1086,28 @@ def analyze_manifest(
                     f"commit {index}/{len(selected)} "
                     f"[bold]{candidate.sha[:8]}[/bold]"
                 )
-                print_progress(
-                    f"[cyan]{repo_label}[/cyan]: {commit_label}"
+                emit_progress(
+                    f"[cyan]{repo_label}[/cyan]: {commit_label}",
+                    repo_index=repo_index,
+                    repo_total=total_repos,
+                    repo_key=repo_key,
+                    commit_index=index,
+                    commit_total=len(selected),
+                    commit_sha=candidate.sha[:8],
+                    stage="commit_start",
                 )
                 try:
                     if debug:
-                        print_progress(
+                        emit_progress(
                             f"[blue]{repo_label}[/blue]: {commit_label}: materializing snapshot"
+                            ,
+                            repo_index=repo_index,
+                            repo_total=total_repos,
+                            repo_key=repo_key,
+                            commit_index=index,
+                            commit_total=len(selected),
+                            commit_sha=candidate.sha[:8],
+                            stage="materialize_snapshot",
                         )
                     materialize_commit_snapshot(
                         cache_repo_path,
@@ -921,8 +1115,16 @@ def analyze_manifest(
                         snapshot_dir,
                     )
                     if debug:
-                        print_progress(
+                        emit_progress(
                             f"[blue]{repo_label}[/blue]: {commit_label}: discovering entry file"
+                            ,
+                            repo_index=repo_index,
+                            repo_total=total_repos,
+                            repo_key=repo_key,
+                            commit_index=index,
+                            commit_total=len(selected),
+                            commit_sha=candidate.sha[:8],
+                            stage="discover_entry_file",
                         )
                     entry_path = discover_entry_file(
                         snapshot_dir,
@@ -930,9 +1132,17 @@ def analyze_manifest(
                         repo.entry_file,
                     )
                     if debug:
-                        print_progress(
+                        emit_progress(
                             f"[blue]{repo_label}[/blue]: {commit_label}: entry file "
                             f"[bold]{entry_path.relative_to(snapshot_dir)}[/bold]"
+                            ,
+                            repo_index=repo_index,
+                            repo_total=total_repos,
+                            repo_key=repo_key,
+                            commit_index=index,
+                            commit_total=len(selected),
+                            commit_sha=candidate.sha[:8],
+                            stage="entry_file",
                         )
                     metric_kwargs: dict[str, object] = {}
                     if debug:
@@ -940,6 +1150,22 @@ def analyze_manifest(
                             "debug": True,
                             "repo_label": repo_label,
                             "commit_label": commit_label,
+                            "progress_callback": lambda message, *,
+                            _repo_index=repo_index,
+                            _total_repos=total_repos,
+                            _repo_key=repo_key,
+                            _index=index,
+                            _selected_len=len(selected),
+                            _commit_sha=candidate.sha[:8]: emit_progress(
+                                message,
+                                repo_index=_repo_index,
+                                repo_total=_total_repos,
+                                repo_key=_repo_key,
+                                commit_index=_index,
+                                commit_total=_selected_len,
+                                commit_sha=_commit_sha,
+                                stage="metrics_debug",
+                            ),
                         }
                     metric_summary = run_metrics_for_snapshot(
                         snapshot_dir,
@@ -976,18 +1202,33 @@ def analyze_manifest(
                         status="ok",
                         error=None,
                     )
-                    rows.append(row)
-                    print_progress(
+                    append_row(row)
+                    emit_progress(
                         f"[green]{repo_label}[/green]: completed {candidate.sha[:8]} "
                         f"at [bold]{candidate.committed_at}[/bold] "
                         f"LOC=[bold]{row.loc}[/bold] "
-                        f"files=[bold]{row.file_count}[/bold] -> {artifact_dir}"
+                        f"files=[bold]{row.file_count}[/bold] -> {artifact_dir}",
+                        repo_index=repo_index,
+                        repo_total=total_repos,
+                        repo_key=repo_key,
+                        commit_index=index,
+                        commit_total=len(selected),
+                        commit_sha=candidate.sha[:8],
+                        stage="commit_complete",
                     )
                 except Exception as error:  # noqa: BLE001
-                    print_progress(
-                        f"[red]{repo_label}[/red]: failed {candidate.sha[:8]}: {error}"
+                    emit_progress(
+                        f"[red]{repo_label}[/red]: failed {candidate.sha[:8]}: {error}",
+                        level="error",
+                        repo_index=repo_index,
+                        repo_total=total_repos,
+                        repo_key=repo_key,
+                        commit_index=index,
+                        commit_total=len(selected),
+                        commit_sha=candidate.sha[:8],
+                        stage="commit_failed",
                     )
-                    rows.append(
+                    append_row(
                         CommitSummaryRow(
                             repo_key=repo_key,
                             repo_url=repo.url,
@@ -1013,13 +1254,23 @@ def analyze_manifest(
                         )
                     )
 
-    if rows:
-        write_summary_json(
-            effective_output_dir / "summary.json",
-            rows,
-            manifest_path,
+    persist_run_summaries(
+        effective_output_dir,
+        rows,
+        manifest_path,
+    )
+    if debug_writer is not None:
+        debug_writer.write_event(
+            {
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+                "level": "info",
+                "stage": "run_complete",
+                "message": "repo analysis run completed",
+                "ok_count": sum(1 for row in rows if row.status == "ok"),
+                "row_count": len(rows),
+            }
         )
-        write_summary_csv(effective_output_dir / "summary.csv", rows)
+        debug_writer.close()
 
     return rows
 
@@ -1059,6 +1310,13 @@ def main(
             help="Print per-commit stage and metric details during analysis.",
         ),
     ] = None,
+    write_during_run: Annotated[
+        bool | None,
+        typer.Option(
+            "--write-during-run/--no-write-during-run",
+            help="Rewrite summary.json and summary.csv during the run.",
+        ),
+    ] = None,
 ) -> None:
     """Run manifest-driven repo snapshot analysis."""
 
@@ -1071,6 +1329,9 @@ def main(
         repo_name=repo,
         skip_repos=tuple(skip_repo or ()),
         debug=bool(debug),
+        write_during_run=(
+            True if write_during_run is None else bool(write_during_run)
+        ),
     )
 
     ok_count = sum(1 for row in rows if row.status == "ok")

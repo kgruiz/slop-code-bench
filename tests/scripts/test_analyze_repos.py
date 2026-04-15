@@ -405,6 +405,148 @@ def test_analyze_manifest_prefers_manifest_stars_over_lookup(
     assert rows[0].note == "from paper"
 
 
+def test_analyze_manifest_rewrites_summary_during_run_by_default(
+    git_remote: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest_path = tmp_path / "repos.json"
+    output_dir = tmp_path / "out"
+    _write_json(
+        manifest_path,
+        {
+            "default_sample_count": 2,
+            "output_dir": str(output_dir),
+            "repos": [
+                {
+                    "name": "sample-repo",
+                    "url": str(git_remote),
+                }
+            ],
+        },
+    )
+
+    call_row_counts: list[int] = []
+    original_persist = MODULE.persist_run_summaries
+
+    def track_persist(out_dir: Path, rows, manifest: Path) -> None:
+        call_row_counts.append(len(rows))
+        original_persist(out_dir, rows, manifest)
+
+    monkeypatch.setattr(MODULE, "persist_run_summaries", track_persist)
+    monkeypatch.setattr(MODULE, "fetch_github_stars", lambda *args, **kwargs: "42")
+
+    def fake_run_metrics(
+        snapshot_dir: Path,
+        entry_file: Path,
+        artifact_dir: Path,
+        **_kwargs,
+    ) -> dict[str, float | int]:
+        quality_dir = artifact_dir / "quality_analysis"
+        quality_dir.mkdir(parents=True, exist_ok=True)
+        (quality_dir / "overall_quality.json").write_text("{}")
+        (quality_dir / "files.jsonl").write_text("")
+        (quality_dir / "symbols.jsonl").write_text("")
+        (quality_dir / "ast_grep.jsonl").write_text("")
+        return {
+            "file_count": 1,
+            "loc": 10,
+            "violation_pct": 0.0,
+            "ast_grep_violations": 0,
+            "ast_grep_rules_checked": 1,
+            "clone_ratio": 0.0,
+            "verbosity": 0.0,
+            "erosion": 0.0,
+        }
+
+    monkeypatch.setattr(MODULE, "run_metrics_for_snapshot", fake_run_metrics)
+
+    MODULE.analyze_manifest(manifest_path)
+
+    assert call_row_counts == [1, 2, 2]
+    assert (output_dir / "summary.json").exists()
+    assert (output_dir / "summary.csv").exists()
+
+
+def test_analyze_manifest_can_disable_live_summary_rewrites_but_still_writes_debug(
+    git_remote: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest_path = tmp_path / "repos.json"
+    output_dir = tmp_path / "out"
+    _write_json(
+        manifest_path,
+        {
+            "default_sample_count": 1,
+            "output_dir": str(output_dir),
+            "repos": [
+                {
+                    "name": "sample-repo",
+                    "url": str(git_remote),
+                }
+            ],
+        },
+    )
+
+    call_row_counts: list[int] = []
+    original_persist = MODULE.persist_run_summaries
+
+    def track_persist(out_dir: Path, rows, manifest: Path) -> None:
+        call_row_counts.append(len(rows))
+        original_persist(out_dir, rows, manifest)
+
+    monkeypatch.setattr(MODULE, "persist_run_summaries", track_persist)
+    monkeypatch.setattr(MODULE, "fetch_github_stars", lambda *args, **kwargs: "42")
+    monkeypatch.setattr(MODULE, "get_progress_timestamp", lambda: "12:34:56")
+
+    def fake_run_metrics(
+        snapshot_dir: Path,
+        entry_file: Path,
+        artifact_dir: Path,
+        **kwargs,
+    ) -> dict[str, float | int]:
+        progress_callback = kwargs.get("progress_callback")
+        if progress_callback is not None:
+            progress_callback("[blue][1/1] sample-repo[/blue]: commit 1/1 [bold]abc12345[/bold]: fake metric stage")
+        quality_dir = artifact_dir / "quality_analysis"
+        quality_dir.mkdir(parents=True, exist_ok=True)
+        (quality_dir / "overall_quality.json").write_text("{}")
+        (quality_dir / "files.jsonl").write_text("")
+        (quality_dir / "symbols.jsonl").write_text("")
+        (quality_dir / "ast_grep.jsonl").write_text("")
+        return {
+            "file_count": 1,
+            "loc": 10,
+            "violation_pct": 0.0,
+            "ast_grep_violations": 0,
+            "ast_grep_rules_checked": 1,
+            "clone_ratio": 0.0,
+            "verbosity": 0.0,
+            "erosion": 0.0,
+        }
+
+    monkeypatch.setattr(MODULE, "run_metrics_for_snapshot", fake_run_metrics)
+
+    MODULE.analyze_manifest(
+        manifest_path,
+        debug=True,
+        write_during_run=False,
+    )
+
+    assert call_row_counts == [1]
+    debug_lines = [
+        json.loads(line)
+        for line in (output_dir / "debug.jsonl").read_text().splitlines()
+    ]
+    assert any(event["stage"] == "run_start" for event in debug_lines)
+    assert any(event["stage"] == "commit_start" for event in debug_lines)
+    assert any(event["stage"] == "metrics_debug" for event in debug_lines)
+    assert any(event["stage"] == "run_complete" for event in debug_lines)
+    assert (output_dir / "summary.json").exists()
+    assert (output_dir / "summary.csv").exists()
+
+
 def test_analyze_manifest_skips_named_repo_filter(
     git_remote: Path,
     tmp_path: Path,
