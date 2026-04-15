@@ -510,22 +510,43 @@ def run_metrics_for_snapshot(
     snapshot_dir: Path,
     entry_file: Path,
     artifact_dir: Path,
+    *,
+    debug: bool = False,
+    repo_label: str | None = None,
+    commit_label: str | None = None,
 ) -> dict[str, int | float]:
     """Run snapshot quality metrics and save the standard artifacts."""
 
     relative_entry_file = entry_file.relative_to(snapshot_dir)
+    if debug and repo_label and commit_label:
+        print_progress(
+            f"[blue]{repo_label}[/blue]: {commit_label}: running "
+            "[bold]measure_snapshot_quality[/bold]"
+        )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)
         quality_result, file_metrics = measure_snapshot_quality(
             relative_entry_file, snapshot_dir
         )
+    if debug and repo_label and commit_label:
+        print_progress(
+            f"[blue]{repo_label}[/blue]: {commit_label}: writing "
+            "[bold]quality_analysis[/bold] artifacts"
+        )
     save_quality_metrics(artifact_dir, quality_result, file_metrics)
 
+    if debug and repo_label and commit_label:
+        print_progress(
+            f"[blue]{repo_label}[/blue]: {commit_label}: computing "
+            "[bold]loc[/bold], [bold]violation_pct[/bold], "
+            "[bold]clone_ratio[/bold], [bold]verbosity[/bold], "
+            "[bold]erosion[/bold]"
+        )
     flat_metrics = get_quality_metrics(artifact_dir)
     verbosity = compute_checkpoint_verbosity(flat_metrics)
     erosion = compute_checkpoint_erosion(flat_metrics)
 
-    return {
+    metric_summary = {
         "file_count": quality_result.file_count,
         "loc": int(flat_metrics.get("loc", 0)),
         "violation_pct": float(flat_metrics.get("violation_pct", 0.0)),
@@ -535,6 +556,17 @@ def run_metrics_for_snapshot(
         "verbosity": float(verbosity) if verbosity is not None else 0.0,
         "erosion": float(erosion) if erosion is not None else 0.0,
     }
+    if debug and repo_label and commit_label:
+        print_progress(
+            f"[blue]{repo_label}[/blue]: {commit_label}: metrics "
+            f"LOC=[bold]{metric_summary['loc']}[/bold] "
+            f"files=[bold]{metric_summary['file_count']}[/bold] "
+            f"violation_pct=[bold]{metric_summary['violation_pct']:.4f}[/bold] "
+            f"clone_ratio=[bold]{metric_summary['clone_ratio']:.4f}[/bold] "
+            f"verbosity=[bold]{metric_summary['verbosity']:.4f}[/bold] "
+            f"erosion=[bold]{metric_summary['erosion']:.4f}[/bold]"
+        )
+    return metric_summary
 
 
 def write_summary_csv(output_path: Path, rows: list[CommitSummaryRow]) -> None:
@@ -574,6 +606,7 @@ def analyze_manifest(
     refresh: bool = False,
     repo_name: str | None = None,
     skip_repos: tuple[str, ...] = (),
+    debug: bool = False,
 ) -> list[CommitSummaryRow]:
     """Run repo analysis for a manifest and return all summary rows."""
 
@@ -821,25 +854,49 @@ def analyze_manifest(
                     / repo_key
                     / f"{index:03d}-{candidate.sha[:8]}"
                 )
-                print_progress(
-                    f"[cyan]{repo_label}[/cyan]: commit {index}/{len(selected)} "
+                commit_label = (
+                    f"commit {index}/{len(selected)} "
                     f"[bold]{candidate.sha[:8]}[/bold]"
                 )
+                print_progress(
+                    f"[cyan]{repo_label}[/cyan]: {commit_label}"
+                )
                 try:
+                    if debug:
+                        print_progress(
+                            f"[blue]{repo_label}[/blue]: {commit_label}: materializing snapshot"
+                        )
                     materialize_commit_snapshot(
                         cache_repo_path,
                         candidate.sha,
                         snapshot_dir,
                     )
+                    if debug:
+                        print_progress(
+                            f"[blue]{repo_label}[/blue]: {commit_label}: discovering entry file"
+                        )
                     entry_path = discover_entry_file(
                         snapshot_dir,
                         extensions,
                         repo.entry_file,
                     )
+                    if debug:
+                        print_progress(
+                            f"[blue]{repo_label}[/blue]: {commit_label}: entry file "
+                            f"[bold]{entry_path.relative_to(snapshot_dir)}[/bold]"
+                        )
+                    metric_kwargs: dict[str, object] = {}
+                    if debug:
+                        metric_kwargs = {
+                            "debug": True,
+                            "repo_label": repo_label,
+                            "commit_label": commit_label,
+                        }
                     metric_summary = run_metrics_for_snapshot(
                         snapshot_dir,
                         entry_path,
                         artifact_dir,
+                        **metric_kwargs,
                     )
                     row = CommitSummaryRow(
                         repo_key=repo_key,
@@ -945,6 +1002,14 @@ def main(
             help="Repo name/key to exclude. May be provided multiple times.",
         ),
     ] = None,
+    debug: Annotated[
+        bool | None,
+        typer.Option(
+            "--debug",
+            is_flag=True,
+            help="Print per-commit stage and metric details during analysis.",
+        ),
+    ] = None,
 ) -> None:
     """Run manifest-driven repo snapshot analysis."""
 
@@ -956,6 +1021,7 @@ def main(
         refresh=bool(refresh),
         repo_name=repo,
         skip_repos=tuple(skip_repo or ()),
+        debug=bool(debug),
     )
 
     ok_count = sum(1 for row in rows if row.status == "ok")

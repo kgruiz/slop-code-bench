@@ -478,6 +478,7 @@ def test_discover_entry_file_prefers_explicit_path(tmp_path: Path):
 def test_run_metrics_for_snapshot_passes_entry_file_relative_to_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ):
     snapshot_dir = tmp_path / "snapshot"
     artifact_dir = tmp_path / "artifacts"
@@ -504,12 +505,37 @@ def test_run_metrics_for_snapshot_passes_entry_file_relative_to_snapshot(
         captured["output_arg"] = output_arg
 
     monkeypatch.setattr(MODULE, "save_quality_metrics", fake_save_quality_metrics)
-    monkeypatch.setattr(MODULE, "get_quality_metrics", lambda *args, **kwargs: {})
-    monkeypatch.setattr(MODULE, "compute_checkpoint_verbosity", lambda *args, **kwargs: 0.0)
-    monkeypatch.setattr(MODULE, "compute_checkpoint_erosion", lambda *args, **kwargs: 0.0)
+    monkeypatch.setattr(
+        MODULE,
+        "get_quality_metrics",
+        lambda *args, **kwargs: {
+            "loc": 11,
+            "violation_pct": 0.25,
+            "cloned_pct": 0.5,
+        },
+    )
+    monkeypatch.setattr(MODULE, "compute_checkpoint_verbosity", lambda *args, **kwargs: 0.75)
+    monkeypatch.setattr(MODULE, "compute_checkpoint_erosion", lambda *args, **kwargs: 0.9)
+    monkeypatch.setattr(MODULE, "get_progress_timestamp", lambda: "12:34:56")
 
-    MODULE.run_metrics_for_snapshot(snapshot_dir, entry_file, artifact_dir)
+    MODULE.run_metrics_for_snapshot(
+        snapshot_dir,
+        entry_file,
+        artifact_dir,
+        debug=True,
+        repo_label="[1/1] sample-repo",
+        commit_label="commit 1/1 [bold]abc12345[/bold]",
+    )
+    output = capsys.readouterr().out
 
     assert captured["snapshot_arg"] == snapshot_dir
     assert captured["entry_arg"] == Path("pkg/core.py")
     assert captured["output_arg"] == artifact_dir
+    assert "12:34:56" in output
+    assert "measure_snapshot_quality" in output
+    assert "quality_analysis" in output
+    assert "computing" in output
+    assert "violation_pct" in output
+    assert "clone_ratio" in output
+    assert "verbosity" in output
+    assert "erosion" in output
