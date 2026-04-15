@@ -248,6 +248,7 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
     )
 
     monkeypatch.setattr(MODULE, "fetch_github_stars", lambda *args, **kwargs: "42")
+    monkeypatch.setattr(MODULE, "get_progress_timestamp", lambda: "12:34:56")
 
     def fake_run_metrics(
         snapshot_dir: Path,
@@ -281,6 +282,7 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
     assert all(row.stars == "42" for row in ok_rows)
     assert (output_dir / "summary.json").exists()
     assert (output_dir / "summary.csv").exists()
+    assert "12:34:56" in output
     assert "ready on branch" in output
     assert "stars=42" in output
     assert "LOC=20" in output

@@ -60,6 +60,18 @@ DEFAULT_MANIFEST_PATH = (
 )
 
 
+def get_progress_timestamp() -> str:
+    """Return the current wall-clock time for progress output."""
+
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def print_progress(message: str) -> None:
+    """Print one timestamped progress line."""
+
+    CONSOLE.print(f"[dim]{get_progress_timestamp()}[/dim] {message}")
+
+
 class RepoEntry(BaseModel):
     """One repository entry in the analysis manifest."""
 
@@ -596,11 +608,11 @@ def analyze_manifest(
 
     ast_grep_bin = _get_ast_grep_binary()
     if ast_grep_bin is None:
-        CONSOLE.print(
+        print_progress(
             "[yellow]ast-grep[/yellow]: not found; AST-grep rule checks will be skipped"
         )
     else:
-        CONSOLE.print(
+        print_progress(
             f"[cyan]ast-grep[/cyan]: using [bold]{ast_grep_bin}[/bold]"
         )
 
@@ -621,7 +633,7 @@ def analyze_manifest(
             repo_output_dir = effective_output_dir / repo_key
             stars = repo.stars
             if repo.url is None:
-                CONSOLE.print(
+                print_progress(
                     f"[yellow]{repo_label}[/yellow]: no URL configured, skipping"
                 )
                 rows.append(
@@ -652,12 +664,12 @@ def analyze_manifest(
                 continue
 
             repo_output_dir.mkdir(parents=True, exist_ok=True)
-            CONSOLE.print(f"[cyan]{repo_label}[/cyan]: preparing repository")
+            print_progress(f"[cyan]{repo_label}[/cyan]: preparing repository")
 
             if stars is None:
                 stars = fetch_github_stars(repo.url, client=http_client)
                 if parse_github_repo(repo.url) and stars is None:
-                    CONSOLE.print(
+                    print_progress(
                         f"[yellow]{repo_label}: could not fetch GitHub stars; continuing.[/yellow]"
                     )
 
@@ -665,22 +677,22 @@ def analyze_manifest(
                 if no_cache:
                     temp_dir = Path(exit_stack.enter_context(tempfile.TemporaryDirectory()))
                     cache_repo_path = temp_dir / repo_key
-                    CONSOLE.print(
+                    print_progress(
                         f"[cyan]{repo_label}[/cyan]: cloning temporary repository"
                     )
                 else:
                     cache_repo_path = cache_dir / repo_key
                     if cache_repo_path.exists():
                         if refresh:
-                            CONSOLE.print(
+                            print_progress(
                                 f"[cyan]{repo_label}[/cyan]: refreshing cached repository"
                             )
                         else:
-                            CONSOLE.print(
+                            print_progress(
                                 f"[cyan]{repo_label}[/cyan]: reusing cached repository"
                             )
                     else:
-                        CONSOLE.print(
+                        print_progress(
                             f"[cyan]{repo_label}[/cyan]: cloning repository into cache"
                         )
 
@@ -690,11 +702,11 @@ def analyze_manifest(
                     refresh=refresh,
                 )
                 if repo_state == "cloned":
-                    CONSOLE.print(
+                    print_progress(
                         f"[cyan]{repo_label}[/cyan]: clone complete"
                     )
                 elif repo_state == "refreshed":
-                    CONSOLE.print(
+                    print_progress(
                         f"[cyan]{repo_label}[/cyan]: cache refresh complete"
                     )
                 branch_name = resolve_branch_name(
@@ -702,7 +714,7 @@ def analyze_manifest(
                     repo.branch,
                     manifest.default_branch,
                 )
-                CONSOLE.print(
+                print_progress(
                     f"[cyan]{repo_label}[/cyan]: scanning commit history on branch "
                     f"[bold]{branch_name}[/bold]"
                 )
@@ -713,7 +725,7 @@ def analyze_manifest(
                     repo.include_globs,
                     repo.exclude_globs,
                 )
-                CONSOLE.print(
+                print_progress(
                     f"[cyan]{repo_label}[/cyan]: found {len(candidates)} eligible commit(s)"
                 )
                 selected = select_commits(
@@ -723,21 +735,21 @@ def analyze_manifest(
                     pinned_refs=repo.pinned_refs,
                 )
                 if repo.pinned_refs:
-                    CONSOLE.print(
+                    print_progress(
                         f"[cyan]{repo_label}[/cyan]: using {len(selected)} pinned ref(s)"
                     )
                 else:
-                    CONSOLE.print(
+                    print_progress(
                         f"[cyan]{repo_label}[/cyan]: selected {len(selected)} commit(s) with seed "
                         f"[bold]{repo_seed}[/bold]"
                     )
 
                 stars_text = f" stars=[bold]{stars}[/bold]" if stars else ""
-                CONSOLE.print(
+                print_progress(
                     f"[cyan]{repo_label}[/cyan]: ready on branch [bold]{branch_name}[/bold]{stars_text}"
                 )
             except Exception as error:  # noqa: BLE001
-                CONSOLE.print(
+                print_progress(
                     f"[red]{repo_label}[/red]: repository setup failed: {error}"
                 )
                 rows.append(
@@ -768,7 +780,7 @@ def analyze_manifest(
                 continue
 
             if not selected:
-                CONSOLE.print(
+                print_progress(
                     f"[yellow]{repo_label}[/yellow]: no eligible source-touching commits found"
                 )
                 rows.append(
@@ -798,7 +810,7 @@ def analyze_manifest(
                 )
                 continue
 
-            CONSOLE.print(
+            print_progress(
                 f"[cyan]{repo_label}[/cyan]: analyzing {len(selected)} commit(s) from branch "
                 f"[bold]{branch_name}[/bold]"
             )
@@ -809,7 +821,7 @@ def analyze_manifest(
                     / repo_key
                     / f"{index:03d}-{candidate.sha[:8]}"
                 )
-                CONSOLE.print(
+                print_progress(
                     f"[cyan]{repo_label}[/cyan]: commit {index}/{len(selected)} "
                     f"[bold]{candidate.sha[:8]}[/bold]"
                 )
@@ -859,14 +871,14 @@ def analyze_manifest(
                         error=None,
                     )
                     rows.append(row)
-                    CONSOLE.print(
+                    print_progress(
                         f"[green]{repo_label}[/green]: completed {candidate.sha[:8]} "
                         f"at [bold]{candidate.committed_at}[/bold] "
                         f"LOC=[bold]{row.loc}[/bold] "
                         f"files=[bold]{row.file_count}[/bold] -> {artifact_dir}"
                     )
                 except Exception as error:  # noqa: BLE001
-                    CONSOLE.print(
+                    print_progress(
                         f"[red]{repo_label}[/red]: failed {candidate.sha[:8]}: {error}"
                     )
                     rows.append(
@@ -949,7 +961,7 @@ def main(
     ok_count = sum(1 for row in rows if row.status == "ok")
     fail_count = sum(1 for row in rows if row.status not in {"ok", "skipped"})
     skip_count = sum(1 for row in rows if row.status == "skipped")
-    CONSOLE.print(
+    print_progress(
         f"Analyzed {ok_count} snapshots "
         f"({fail_count} failed, {skip_count} skipped)."
     )
