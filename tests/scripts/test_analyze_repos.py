@@ -228,6 +228,7 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
     git_remote: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ):
     manifest_path = tmp_path / "repos.json"
     output_dir = tmp_path / "out"
@@ -273,12 +274,18 @@ def test_analyze_manifest_writes_quality_outputs_and_summary(
     monkeypatch.setattr(MODULE, "run_metrics_for_snapshot", fake_run_metrics)
 
     rows = MODULE.analyze_manifest(manifest_path)
+    output = capsys.readouterr().out
 
     ok_rows = [row for row in rows if row.status == "ok"]
     assert len(ok_rows) == 2
     assert all(row.stars == "42" for row in ok_rows)
     assert (output_dir / "summary.json").exists()
     assert (output_dir / "summary.csv").exists()
+    assert "ready on branch" in output
+    assert "stars=42" in output
+    assert "LOC=20" in output
+    assert "files=2" in output
+    assert "completed" in output
 
     for row in ok_rows:
         assert row.snapshot_path is not None

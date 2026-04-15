@@ -723,6 +723,11 @@ def analyze_manifest(
                         f"[cyan]{repo_label}[/cyan]: selected {len(selected)} commit(s) with seed "
                         f"[bold]{repo_seed}[/bold]"
                     )
+
+                stars_text = f" stars=[bold]{stars}[/bold]" if stars else ""
+                CONSOLE.print(
+                    f"[cyan]{repo_label}[/cyan]: ready on branch [bold]{branch_name}[/bold]{stars_text}"
+                )
             except Exception as error:  # noqa: BLE001
                 CONSOLE.print(
                     f"[red]{repo_label}[/red]: repository setup failed: {error}"
@@ -847,8 +852,10 @@ def analyze_manifest(
                     )
                     rows.append(row)
                     CONSOLE.print(
-                        f"[green]{repo_label}[/green]: completed {candidate.sha[:8]} -> "
-                        f"{artifact_dir}"
+                        f"[green]{repo_label}[/green]: completed {candidate.sha[:8]} "
+                        f"at [bold]{candidate.committed_at}[/bold] "
+                        f"LOC=[bold]{row.loc}[/bold] "
+                        f"files=[bold]{row.file_count}[/bold] -> {artifact_dir}"
                     )
                 except Exception as error:  # noqa: BLE001
                     CONSOLE.print(
