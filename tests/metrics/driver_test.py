@@ -450,7 +450,11 @@ class TestMeasureSnapshotQuality:
         )
 
         def fake_calculate(
-            file_path: Path, depth: int, *, is_entry_language: bool = False
+            file_path: Path,
+            depth: int,
+            *,
+            is_entry_language: bool = False,
+            stage_timings=None,
         ) -> FileMetrics:
             assert file_path == source
             return FileMetrics(

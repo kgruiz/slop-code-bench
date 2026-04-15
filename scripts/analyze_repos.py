@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import warnings
 from contextlib import ExitStack
 from dataclasses import asdict
@@ -70,6 +71,20 @@ def print_progress(message: str) -> None:
     """Print one timestamped progress line."""
 
     CONSOLE.print(f"[dim]{get_progress_timestamp()}[/dim] {message}")
+
+
+def format_duration(seconds: float) -> str:
+    """Format a duration for compact progress output."""
+
+    if seconds >= 60:
+        minutes = int(seconds // 60)
+        remainder = seconds - (minutes * 60)
+        return f"{minutes}m{remainder:04.1f}s"
+
+    if seconds >= 1:
+        return f"{seconds:.1f}s"
+
+    return f"{seconds * 1000:.0f}ms"
 
 
 class RepoEntry(BaseModel):
@@ -523,15 +538,49 @@ def run_metrics_for_snapshot(
             f"[blue]{repo_label}[/blue]: {commit_label}: running "
             "[bold]measure_snapshot_quality[/bold]"
         )
+        print_progress(
+            f"[blue]{repo_label}[/blue]: {commit_label}: metric families "
+            "[bold]line[/bold], [bold]lint[/bold], [bold]symbol[/bold], "
+            "[bold]mi[/bold], [bold]imports[/bold], [bold]redundancy[/bold], "
+            "[bold]waste[/bold], [bold]type_check[/bold], "
+            "[bold]ast_grep[/bold], [bold]trace_source_files[/bold], "
+            "[bold]dependency_graph[/bold], [bold]aggregate_metrics[/bold]"
+        )
+    timing_details: dict[str, float] = {}
+
+    def capture_timing_details(stage_timings: dict[str, float]) -> None:
+        timing_details.update(stage_timings)
+
+    measure_start = time.perf_counter()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)
         quality_result, file_metrics = measure_snapshot_quality(
-            relative_entry_file, snapshot_dir
+            relative_entry_file,
+            snapshot_dir,
+            timing_callback=capture_timing_details if debug else None,
         )
+    measure_elapsed = time.perf_counter() - measure_start
     if debug and repo_label and commit_label:
+        if timing_details:
+            timing_parts = [
+                f"{stage}={format_duration(duration)}"
+                for stage, duration in sorted(
+                    timing_details.items(),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )
+                if duration > 0
+            ]
+            if timing_parts:
+                print_progress(
+                    f"[blue]{repo_label}[/blue]: {commit_label}: "
+                    f"[bold]measure_snapshot_quality[/bold] timings "
+                    + ", ".join(timing_parts)
+                )
         print_progress(
             f"[blue]{repo_label}[/blue]: {commit_label}: writing "
-            "[bold]quality_analysis[/bold] artifacts"
+            f"[bold]quality_analysis[/bold] artifacts after "
+            f"{format_duration(measure_elapsed)}"
         )
     save_quality_metrics(artifact_dir, quality_result, file_metrics)
 

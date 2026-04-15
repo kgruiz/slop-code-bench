@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import json
+import time
 from collections import Counter
 from collections.abc import Callable
 from collections.abc import Generator
@@ -55,7 +56,11 @@ IGNORED_SLOC_TOKEN_TYPES = {
 
 
 def _calculate_file_metrics(
-    file_path: Path, depth: int, *, is_entry_language: bool = False
+    file_path: Path,
+    depth: int,
+    *,
+    is_entry_language: bool = False,
+    stage_timings: Counter[str] | None = None,
 ) -> FileMetrics | None:
     """Calculate quality metrics for a single Python file.
 
@@ -74,17 +79,54 @@ def _calculate_file_metrics(
             extension=file_path.suffix,
         )
         return None
+    stage_start = time.perf_counter()
     line_metrics = language.line(file_path)
+    if stage_timings is not None:
+        stage_timings["line"] += time.perf_counter() - stage_start
+
+    stage_start = time.perf_counter()
     lint_metrics = language.lint(file_path)
+    if stage_timings is not None:
+        stage_timings["lint"] += time.perf_counter() - stage_start
+
+    stage_start = time.perf_counter()
     symbols = language.symbol(file_path)
+    if stage_timings is not None:
+        stage_timings["symbol"] += time.perf_counter() - stage_start
+
+    stage_start = time.perf_counter()
     mi = language.mi(file_path)
+    if stage_timings is not None:
+        stage_timings["mi"] += time.perf_counter() - stage_start
+
+    stage_start = time.perf_counter()
     imports = extract_imports(file_path) if file_path.suffix == ".py" else []
+    if stage_timings is not None:
+        stage_timings["imports"] += time.perf_counter() - stage_start
+
     import_count = len(imports)
     global_count = sum(1 for symbol in symbols if symbol.type == "variable")
+
+    stage_start = time.perf_counter()
     redundancy = language.redundancy(file_path) if language.redundancy else None
+    if stage_timings is not None:
+        stage_timings["redundancy"] += time.perf_counter() - stage_start
+
+    stage_start = time.perf_counter()
     waste = language.waste(file_path, symbols) if language.waste else None
+    if stage_timings is not None:
+        stage_timings["waste"] += time.perf_counter() - stage_start
+
+    stage_start = time.perf_counter()
     type_check = language.type_check(file_path) if language.type_check else None
+    if stage_timings is not None:
+        stage_timings["type_check"] += time.perf_counter() - stage_start
+
+    stage_start = time.perf_counter()
     ast_grep = language.ast_grep(file_path) if language.ast_grep else None
+    if stage_timings is not None:
+        stage_timings["ast_grep"] += time.perf_counter() - stage_start
+
     return FileMetrics(
         symbols=symbols,
         lines=line_metrics,
@@ -106,6 +148,7 @@ def measure_files(
     dir_path: Path,
     exclude_patterns: set[str],
     entry_extensions: set[str] | None = None,
+    stage_timings: Counter[str] | None = None,
 ) -> Generator[tuple[Path, FileMetrics], None, None]:
     for file_path in dir_path.rglob("*"):
         if file_path.is_dir():
@@ -130,7 +173,10 @@ def measure_files(
         )
         try:
             result = _calculate_file_metrics(
-                file_path, depth, is_entry_language=is_entry_language
+                file_path,
+                depth,
+                is_entry_language=is_entry_language,
+                stage_timings=stage_timings,
             )
         except (UnicodeDecodeError, SyntaxError):
             logger.debug(
@@ -521,7 +567,10 @@ def compute_aggregates(
 
 
 def measure_snapshot_quality(
-    entry_file: str | Path, snapshot_dir: Path
+    entry_file: str | Path,
+    snapshot_dir: Path,
+    *,
+    timing_callback: Callable[[dict[str, float]], None] | None = None,
 ) -> tuple[SnapshotMetrics, list[FileMetrics]]:
     """Measure code quality metrics for a codebase snapshot.
 
@@ -535,6 +584,9 @@ def measure_snapshot_quality(
     from slop_code.metrics.languages.python import trace_source_files
 
     files_metrics: dict[str, FileMetrics] = {}
+    stage_timings: Counter[str] | None = (
+        Counter() if timing_callback is not None else None
+    )
 
     exclude_patterns = {
         "__pycache__",
@@ -573,7 +625,10 @@ def measure_snapshot_quality(
     entry_extensions = entry_language.extensions if entry_language else None
 
     for file_path, file_metric in measure_files(
-        snapshot_dir, exclude_patterns, entry_extensions=entry_extensions
+        snapshot_dir,
+        exclude_patterns,
+        entry_extensions=entry_extensions,
+        stage_timings=stage_timings,
     ):
         relative_path = file_path.relative_to(snapshot_dir)
         path_str = relative_path.as_posix()
@@ -615,7 +670,12 @@ def measure_snapshot_quality(
     traced_source_files: set[str] | None = None
     if target_entry_path.suffix == ".py" and target_entry_path.exists():
         try:
+            trace_start = time.perf_counter()
             traced_paths = trace_source_files(target_entry_path, snapshot_dir)
+            if stage_timings is not None:
+                stage_timings["trace_source_files"] += (
+                    time.perf_counter() - trace_start
+                )
             traced_source_files = {p.as_posix() for p in traced_paths}
         except Exception as e:  # noqa: BLE001
             logger.warning(
@@ -645,13 +705,23 @@ def measure_snapshot_quality(
             dependency_entropy=0.0,
         )
     else:
+        graph_start = time.perf_counter()
         dependency_graph = build_dependency_graph(
             snapshot_dir, target_entry_path
         )
         graph_metrics = compute_graph_metrics(dependency_graph)
+        if stage_timings is not None:
+            stage_timings["dependency_graph"] += (
+                time.perf_counter() - graph_start
+            )
 
     # Compute aggregates using the dedicated function
+    aggregate_start = time.perf_counter()
     agg = compute_aggregates(files_metrics, traced_source_files, snapshot_dir)
+    if stage_timings is not None:
+        stage_timings["aggregate_metrics"] += (
+            time.perf_counter() - aggregate_start
+        )
 
     # Build file list for JSONL output
     file_metrics_list = list(files_metrics.values())
@@ -671,6 +741,9 @@ def measure_snapshot_quality(
         graph=graph_metrics,
         source_files=traced_source_files,
     )
+
+    if timing_callback is not None and stage_timings is not None:
+        timing_callback(dict(stage_timings))
 
     return snapshot, file_metrics_list
 

@@ -495,9 +495,22 @@ def test_run_metrics_for_snapshot_passes_entry_file_relative_to_snapshot(
             violations = 0
             rules_checked = 0
 
-    def fake_measure_snapshot_quality(entry_arg, snapshot_arg):
+    def fake_measure_snapshot_quality(
+        entry_arg,
+        snapshot_arg,
+        *,
+        timing_callback=None,
+    ):
         captured["entry_arg"] = entry_arg
         captured["snapshot_arg"] = snapshot_arg
+        if timing_callback is not None:
+            timing_callback(
+                {
+                    "ast_grep": 2.5,
+                    "symbol": 1.25,
+                    "aggregate_metrics": 0.125,
+                }
+            )
         return _FakeQualityResult(), []
 
     monkeypatch.setattr(MODULE, "measure_snapshot_quality", fake_measure_snapshot_quality)
@@ -535,6 +548,10 @@ def test_run_metrics_for_snapshot_passes_entry_file_relative_to_snapshot(
     assert "measure_snapshot_quality" in output
     assert "quality_analysis" in output
     assert "computing" in output
+    assert "metric families" in output
+    assert "timings" in output
+    assert "ast_grep=2.5s" in output
+    assert "symbol=1.2s" in output
     assert "violation_pct" in output
     assert "clone_ratio" in output
     assert "verbosity" in output
